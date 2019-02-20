@@ -5,6 +5,6 @@
 	"description": "ICKX Unity Netowrking Library",
 	"dependencies": {
 		"com.unity.collections": ">0.0.9",
-		"jp.ickx.common": "*"
+		"jp.ickx.common": "https://github.com/alternator/Common.git#develop"
 	}
 }
