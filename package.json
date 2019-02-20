@@ -1,0 +1,10 @@
+{
+	"name": "jp.ickx.radome",
+	"version": "0.0.1",
+	"unity": "2018.3",
+	"description": "ICKX Unity Netowrking Library",
+	"dependencies": {
+		"com.unity.collections": ">0.0.9",
+		"jp.ickx.common": "*"
+	}
+}
