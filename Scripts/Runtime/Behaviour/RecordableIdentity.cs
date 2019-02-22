@@ -80,8 +80,8 @@ namespace ICKX.Radome {
         }
 
         internal void SetAuthor (ushort author) {
-            this.author = author;
-            OnChangeAuthor (this, author, hasAuthority);
+			this.author = author;
+            OnChangeAuthor?.Invoke (this, author, hasAuthority);
         }
 
         internal void SyncComplete () {
