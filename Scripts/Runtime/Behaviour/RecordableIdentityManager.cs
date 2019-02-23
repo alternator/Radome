@@ -111,8 +111,11 @@ namespace ICKX.Radome {
 		/// Hostに問い合わせて重複しないNetIDを取得する.
 		/// </summary>
 		public static void ReserveNetId (System.Action<ushort> onReserveNetId) {
-			if (GamePacketManager.IsLeader) {
-				onReserveNetId ((ushort)Instance.m_identityList.Count);
+			if (GamePacketManager.IsLeader)
+			{
+				ushort count = (ushort)Instance.m_identityList.Count;
+				Instance.m_identityList.Add(null);
+				onReserveNetId (count);
 			} else {
 				uncheckReserveNetIdCallbacks.Add (onReserveNetId);
 				using (var packet = new DataStreamWriter (1, Allocator.Temp)) {
@@ -129,8 +132,8 @@ namespace ICKX.Radome {
 		public static void RegisterIdentity (RecordableIdentity identity, ushort netId, ushort author) {
 			if (identity == null) return;
 
-			while (identity.netId >= Instance.m_identityList.Count) Instance.m_identityList.Add (null);
-			Instance.m_identityList[identity.netId] = identity;
+			while (netId >= Instance.m_identityList.Count) Instance.m_identityList.Add (null);
+			Instance.m_identityList[netId] = identity;
 			identity.m_netId = netId;
 			identity.SetAuthor (author);
 			identity.SyncComplete ();

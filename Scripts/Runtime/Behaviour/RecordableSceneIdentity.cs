@@ -17,7 +17,7 @@ namespace ICKX.Radome {
 		[SerializeField]
 		protected int m_groupHash;
 
-		[HideInInspector]
+		[Disable]
 		[SerializeField]
 		protected List<RecordableIdentity> m_identityList;
 

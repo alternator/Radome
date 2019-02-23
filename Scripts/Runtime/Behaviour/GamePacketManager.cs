@@ -104,15 +104,15 @@ namespace ICKX.Radome {
 			}
 		}
 
-		public static void ExecOnReconnectPlayer (ushort id) { OnReconnectPlayer?.Invoke (id); }
+		private static void ExecOnReconnectPlayer (ushort id) { OnReconnectPlayer?.Invoke (id); }
 
-		public static void ExecOnDisconnectPlayer (ushort id) { OnDisconnectPlayer?.Invoke (id); }
+		private static void ExecOnDisconnectPlayer (ushort id) { OnDisconnectPlayer?.Invoke (id); }
 
-		public static void ExecOnRegisterPlayer (ushort id) { OnRegisterPlayer?.Invoke (id); }
+		private static void ExecOnRegisterPlayer (ushort id) { OnRegisterPlayer?.Invoke (id); }
 
-		public static void ExecOnUnregisterPlayer (ushort id) { OnUnregisterPlayer?.Invoke (id); }
+		private static void ExecOnUnregisterPlayer (ushort id) { OnUnregisterPlayer?.Invoke (id); }
 
-		public static void ExecOnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
+		private static void ExecOnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
 			OnRecievePacket?.Invoke (senderPlayerId, type, stream, ctx);
 		}
 
