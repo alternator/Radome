@@ -5,13 +5,50 @@ using Unity.Jobs;
 using Unity.Networking.Transport;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using UnityEngine;
-using UdpCNetworkDriver = Unity.Networking.Transport.BasicNetworkDriver<Unity.Networking.Transport.IPv4UDPSocket>;
 
 namespace ICKX.Radome {
 
-    public abstract class NetworkManagerBase : System.IDisposable {
+	[System.Serializable]
+	public abstract class DefaultPlayerInfo {
 
-        public enum State : byte {
+		public DefaultPlayerInfo () { }
+
+		public virtual void Copy (DefaultPlayerInfo info) {
+
+		}
+
+		public virtual int PacketSize => 3;
+
+		public virtual DataStreamWriter CreateUpdatePlayerInfoPacket (ushort id) {
+			var updatePlayerPacket = new DataStreamWriter (PacketSize, Allocator.Temp);
+			updatePlayerPacket.Write ((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+			updatePlayerPacket.Write (id);
+			return updatePlayerPacket;
+		}
+
+		public virtual void Deserialize (ref DataStreamReader chunk, ref DataStreamReader.Context ctx2) {
+
+		}
+	}
+
+	public abstract class NetworkManagerBase : System.IDisposable {
+
+		[System.Serializable]
+		public struct ConnectionInfo {
+			public byte _isCreated;
+			public State state;
+			public float disconnectTime;
+
+			public ConnectionInfo(State state) {
+				this._isCreated = 1;
+				this.state = state;
+				this.disconnectTime = 0.0f;
+			}
+
+			public bool isCreated { get { return _isCreated != 0; } }
+		}
+
+		public enum State : byte {
             Offline = 0,
             Connecting,
             Online,
@@ -35,10 +72,11 @@ namespace ICKX.Radome {
 
         public long leaderStatTime { get; protected set; }
 
-        protected NativeList<byte> activePlayerIdList;
+        protected List<byte> activePlayerIdList = new List<byte> (16);
 
-        protected JobHandle jobHandle;
-        public UdpCNetworkDriver driver;
+		public List<ConnectionInfo> activeConnectionInfoList = new List<ConnectionInfo> (16);
+
+		protected JobHandle jobHandle;
 
 		//public event System.Action OnConnectionFailed = null;
 		public event OnReconnectPlayerEvent OnReconnectPlayer = null;
@@ -48,16 +86,14 @@ namespace ICKX.Radome {
         public event OnRecievePacketEvent OnRecievePacket = null;
 
         public NetworkManagerBase () {
-            activePlayerIdList = new NativeList<byte> (8, Allocator.Persistent);
-        }
+		}
 
         public virtual void Dispose () {
-            activePlayerIdList.Dispose ();
         }
 
         public ushort GetPlayerCount () {
             ushort count = 0;
-            for (int i=0; i<activePlayerIdList.Length;i++) {
+            for (int i=0; i<activePlayerIdList.Count;i++) {
                 byte bits = activePlayerIdList[i];
 
                 bits = (byte)((bits & 0x55) + (bits >> 1 & 0x55));
@@ -75,7 +111,7 @@ namespace ICKX.Radome {
 
         public bool IsActivePlayerId (ushort playerId) {
             ushort index = (ushort)(playerId / 8);
-            if (index >= activePlayerIdList.Length) {
+            if (index >= activePlayerIdList.Count) {
                 return false;
             }else {
                 byte bit = (byte)(1 << (playerId % 8));
@@ -83,23 +119,23 @@ namespace ICKX.Radome {
             }
         }
 
-        protected void RegisterPlayerId (ushort id) {
+        protected virtual void RegisterPlayerId (ushort id) {
             ushort index = (ushort)(id / 8);
             byte bit = (byte)(1 << (id % 8));
-            if (index > activePlayerIdList.Length) {
-                throw new System.Exception ("Register Failed, id=" + id + ", active=" + activePlayerIdList.Length);
-            } else if (index == activePlayerIdList.Length) {
+            if (index > activePlayerIdList.Count) {
+                throw new System.Exception ("Register Failed, id=" + id + ", active=" + activePlayerIdList.Count);
+            } else if (index == activePlayerIdList.Count) {
                 activePlayerIdList.Add(bit);
             } else {
                 activePlayerIdList[index] = (byte)(activePlayerIdList[index] | bit);
             }
         }
 
-        protected void UnregisterPlayerId (ushort id) {
+        protected virtual void UnregisterPlayerId (ushort id) {
             ushort index = (ushort)Mathf.CeilToInt (id / 8);
             byte bit = (byte)(1 << (id % 8));
-            if (index >= activePlayerIdList.Length) {
-                throw new System.Exception ("Unregister Failed, id=" + id + ", active=" + activePlayerIdList.Length);
+            if (index >= activePlayerIdList.Count) {
+                throw new System.Exception ("Unregister Failed, id=" + id + ", active=" + activePlayerIdList.Count);
             } else {
                 activePlayerIdList[index] = (byte)(activePlayerIdList[index] & ~bit);
             }

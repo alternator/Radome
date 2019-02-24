@@ -1,0 +1,17 @@
+{
+    "name": "ICKX.Radome.Editor",
+    "references": [
+        "Unity.Networking.Transport",
+        "Unity.Collections",
+        "ICKX.Common.Runtime",
+        "ICKX.Radome.Runtime"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}

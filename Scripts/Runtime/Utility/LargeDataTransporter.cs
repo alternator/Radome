@@ -54,7 +54,7 @@ namespace ICKX.Radome {
 
 		public int SendBytePerFrame = 16 * 1024;
 
-		public const int HeaderSize = (NetworkLinker.QosHeaderSize + 2 + NetworkManagerBase.AdressHeaderSize);
+		public const int HeaderSize = (NetworkLinkerConstants.QosHeaderSize + 2 + NetworkManagerBase.AdressHeaderSize);
 
 		public void SetNetworkManager (NetworkManagerBase networkManager) {
 			if (networkManager != null) {

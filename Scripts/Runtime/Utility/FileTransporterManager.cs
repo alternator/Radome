@@ -66,7 +66,7 @@ namespace ICKX.Radome {
 
 		public async void Send (ushort playerId, string fileName, System.IO.FileStream fileStream) {
 
-			if (fileStream.Length <= NetworkLinkerPool.MTU - HeaderSize) {
+			if (fileStream.Length <= NetworkParameterConstants.MTU - HeaderSize) {
 				Debug.LogError ("MTU以下のサイズのデータは送れません");
 				return;
 			}
@@ -75,7 +75,7 @@ namespace ICKX.Radome {
 			var transporter = new FileTransporter (hash, fileName, fileStream, SendBytePerFrame, 0);
 
 			int nameByteCount = DataStreamWriter.GetByteSizeStr (fileName);
-			int dataSize = NetworkLinkerPool.MTU - HeaderSize - 15 - nameByteCount;
+			int dataSize = NetworkParameterConstants.MTU - HeaderSize - 15 - nameByteCount;
 			fileStream.Seek (0, SeekOrigin.Begin);
 			int readSize = await fileStream.ReadAsync(transporter.buffer, 0, dataSize);
 			//Debug.Log ("Start : " + string.Join ("", transporter.buffer));
@@ -126,7 +126,7 @@ namespace ICKX.Radome {
 					while (sendAmount < SendBytePerFrame) {
 						//Debug.Log ("sendAmount=" + sendAmount + ", readSize" + readSize + ", pos" + transporter.pos);
 						FlagDef flag = FlagDef.None;
-						int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkLinkerPool.MTU - HeaderSize - 7);
+						int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkParameterConstants.MTU - HeaderSize - 7);
 
 						if (transporter.pos + dataSize > transporter.fileStream.Length) {
 							flag = FlagDef.Complete;

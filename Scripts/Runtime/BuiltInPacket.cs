@@ -14,6 +14,7 @@ namespace ICKX.Radome {
 			NotifyUnegisterPlayer,
 			NotifyReconnectPlayer,
 			NotifyDisconnectPlayer,
+			UpdatePlayerInfo,
 			StopNetwork,
 
             ReserveNetId,

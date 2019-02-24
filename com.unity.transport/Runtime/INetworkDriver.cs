@@ -11,31 +11,20 @@ namespace Unity.Networking.Transport
     /// </summary>
     public interface INetworkDriver : IDisposable
     {
-        // :: Driver Helpers
-        /// <summary>
-        /// Schedule a job to update the state of the NetworkDriver, read messages and events from the underlying
-        /// network interface and populate the event queues to allow reading from connections concurrently.
-        /// </summary>
-        /// <param name="dep">
-        /// Used to chain dependencies for jobs.
-        /// </param>
-        /// <returns>
-        /// A <see cref="JobHandle"/> for the ScheduleUpdate Job.
-        /// </returns>
-        JobHandle ScheduleUpdate(JobHandle dep = default(JobHandle));
+		bool IsCreated { get; }
 
-        // :: Connection Helpers
-        /// <summary>
-        /// Bind the NetworkDriver to a port locally. This must be called before
-        /// the socket can listen for incoming connections.
-        /// </summary>
-        /// <param name="endpoint">
-        /// A valid <see cref="NetworkEndPoint"/>, can be implicitly cast using an System.Net.IPEndPoint
-        /// </param>
-        /// <returns>
-        /// Returns 0 on Success.
-        /// </returns>
-        int Bind(NetworkEndPoint endpoint);
+		// :: Driver Helpers
+		/// <summary>
+		/// Schedule a job to update the state of the NetworkDriver, read messages and events from the underlying
+		/// network interface and populate the event queues to allow reading from connections concurrently.
+		/// </summary>
+		/// <param name="dep">
+		/// Used to chain dependencies for jobs.
+		/// </param>
+		/// <returns>
+		/// A <see cref="JobHandle"/> for the ScheduleUpdate Job.
+		/// </returns>
+		JobHandle ScheduleUpdate(JobHandle dep = default(JobHandle));
 
         /// <summary>
         /// Enable listening for incoming connections on this driver. Before calling this
@@ -58,14 +47,6 @@ namespace Unity.Networking.Transport
         NetworkConnection Accept();
 
         /// <summary>
-        /// Establish a new connection to a server with a specific address and port.
-        /// </summary>
-        /// <param name="endpoint">
-        /// A valid NetworkEndPoint, can be implicitly cast using an System.Net.IPEndPoint
-        /// </param>
-        NetworkConnection Connect(NetworkEndPoint endpoint);
-
-        /// <summary>
         /// Disconnect an existing connection.
         /// </summary>
         /// <returns>
@@ -77,9 +58,6 @@ namespace Unity.Networking.Transport
         /// Get the state of an existing connection. If called with an invalid connection the call will return the Destroyed state.
         /// </summary>
         NetworkConnection.State GetConnectionState(NetworkConnection con);
-
-        NetworkEndPoint RemoteEndPoint(NetworkConnection con);
-        NetworkEndPoint LocalEndPoint();
 
         // :: Events
         /// <summary>
