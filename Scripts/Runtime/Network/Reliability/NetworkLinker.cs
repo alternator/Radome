@@ -14,14 +14,7 @@ namespace ICKX.Radome
 
 	/// <summary>
 	/// ライブラリ利用側は「パケットの送信」「受取りパケットのデシリアライズ」をmain threadのUserUpdate内で行う
-	/// RUDP再送 / UDP・RUDPの受信整理 / パケットリレー など
-	/// ネットワークのjobの流れは以下の形に進める
-	///       内部処理 前半　ユーザースクリプト　レンダリングなど
-	/// Main |-------------|<-- 送信 & 受取 -->|------------------|
-	/// Job                                 |<--RUDP再送--><--受信整理--><--リレー-->|
-	/// Main                                                           |---------------|<-- 送信 & 受取 -->|------------------|
 	/// </summary>
-
 	public enum QosType : byte
 	{
 		Empty = 0,
@@ -89,17 +82,115 @@ namespace ICKX.Radome
 			[ReadOnly]
 			public NetworkConnection connection;
 
+			public NativeArray<ushort> seqNumbers;
+
 			[ReadOnly]
 			public DataStreamWriter packetChunks;
 			[ReadOnly]
 			public NativeList<ushort> packetLengths;
 
-            public void Execute () {
+			public NativeArray<int> uncheckedPacketCount;
+			public DataStreamWriter uncheckedPacketsWriter;
+			public DataStreamWriter uncheckedNewPacketsWriter;
 
+			[ReadOnly]
+			public int currentFrame;
 
+			public unsafe void Execute () {
+				var reader = new DataStreamReader (packetChunks, 0, packetChunks.Length);
+				var ctx = default (DataStreamReader.Context);
+				
+				for (int i = 0; i < packetLengths.Length; i++) {
+					ushort packetDataLen = packetLengths[i];
+					if (packetDataLen == 0) continue;
+					var packet = reader.ReadChunk (ref ctx, packetDataLen);
 
-            }
-        }
+					var temp = new DataStreamWriter (packetDataLen, Allocator.Temp);
+					unsafe {
+						byte* packetPtr = packet.GetUnsafeReadOnlyPtr ();
+						temp.WriteBytes (packetPtr, packetDataLen);
+					}
+					//Debug.Log ("SendReliableChunksJob ChunkIndex = " + i + ", packetDataLen=" + packetDataLen);
+					connection.Send (driver, temp);
+
+					uncheckedPacketCount[0] += 1;
+
+					if (uncheckedPacketsWriter.Capacity < uncheckedPacketsWriter.Length + temp.Length + 6) {
+						uncheckedPacketsWriter.Capacity *= 2;
+					}
+					uncheckedPacketsWriter.Write ((ushort)(temp.Length));
+					uncheckedPacketsWriter.Write (currentFrame);
+					uncheckedPacketsWriter.WriteBytes (temp.GetUnsafeReadOnlyPtr(), temp.Length);
+					temp.Dispose ();
+				}
+
+				if (uncheckedPacketCount[0] > 0) {
+					//相手が受け取ったSeqNumberのパケットを解放.
+					int currentSeqNum = seqNumbers[(int)SeqNumberDef.SelfSeq];
+					int otherAckNum = seqNumbers[(int)SeqNumberDef.OtherAck];
+					int oldestSeqNum = (seqNumbers[(int)SeqNumberDef.SelfSeq] - uncheckedPacketCount[0] + 1);
+
+					if ((oldestSeqNum < ushort.MaxValue / 2) && (otherAckNum > ushort.MaxValue / 2)) {
+						otherAckNum -= ushort.MaxValue + 1;
+					}
+
+					//受け取り確認パケットの解放
+					ushort releaseCount = (ushort)(otherAckNum - oldestSeqNum + 1);
+
+					var uncheckedPacketsReader = new DataStreamReader (uncheckedPacketsWriter, 0, uncheckedPacketsWriter.Length);
+					ctx = new DataStreamReader.Context ();
+
+					//Debug.Log ($"otherAckNum={otherAckNum}, oldestSeqNum={oldestSeqNum}, releaseCount={releaseCount}, PacketCount={uncheckedPacketCount[0]}");
+
+					int releasePos = 0;
+					for (int i = 0; i < releaseCount; i++) {
+						if (uncheckedPacketCount[0] > 0) {
+							var size = uncheckedPacketsReader.ReadUShort (ref ctx);
+							var frame = uncheckedPacketsReader.ReadInt (ref ctx);
+							var chunk = uncheckedPacketsReader.ReadChunk (ref ctx, size);
+							releasePos += 6 + size;
+						}
+					}
+					uncheckedPacketsReader = new DataStreamReader (uncheckedPacketsWriter, releasePos, uncheckedPacketsWriter.Length - releasePos);
+					if (uncheckedNewPacketsWriter.Capacity < uncheckedPacketsReader.Length) {
+						uncheckedNewPacketsWriter.Capacity *= 2;
+					}
+					uncheckedNewPacketsWriter.WriteBytes (uncheckedPacketsReader.GetUnsafeReadOnlyPtr(), uncheckedPacketsReader.Length);
+
+					if(uncheckedPacketCount[0] > releaseCount) {
+						uncheckedPacketCount[0] -= releaseCount;
+					} else {
+						uncheckedPacketCount[0] = 0;
+					}
+
+					//受け取り確認できてないパケットを再送
+					uncheckedPacketsReader = new DataStreamReader (uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
+					ctx = new DataStreamReader.Context ();
+					for (int i = 0; i < uncheckedPacketCount[0]; i++) {
+						var size = uncheckedPacketsReader.ReadUShort (ref ctx);
+						var frame = uncheckedPacketsReader.ReadInt (ref ctx);
+						var chunk = uncheckedPacketsReader.ReadChunk (ref ctx, size);
+						ushort frameCount = (ushort)(currentFrame - frame);
+
+						//タイムアウト
+						if (frameCount > NetworkLinkerConstants.TimeOutFrameCount) {
+							Debug.LogWarning ("uncheckedSelfReliablePackets FrameCount TimeOut Index=" + i);
+						}
+
+						if (Mathf.IsPowerOfTwo (frameCount)) {
+							//if (frameCount == 64 || frameCount == 1024) {
+							//	Debug.Log ("ResendUncheckedPacket : index=" + i + ", frameCount=" + frameCount);
+							//}
+							//時間が経つごとに送信間隔を開ける n乗のフレームの時だけ送る
+							using (var temp = new DataStreamWriter(size, Allocator.Temp)) {
+								temp.WriteBytes (chunk.GetUnsafeReadOnlyPtr(), size);
+								connection.Send (driver, temp);
+							}
+						}
+					}
+				}
+			}
+		}
 
 		struct UpdateJob : IJob
 		{
@@ -175,10 +266,10 @@ namespace ICKX.Radome
 						bool isInitialUpdate = flags[(int)FlagDef.IsNotInitialUpdate] == 0;
 
 						//ackNumの更新
-						if (seqNumbers[(int)SeqNumberDef.OtherAck] != ackNum)
+						ushort oldAckNum = seqNumbers[(int)SeqNumberDef.OtherAck];
+						if (oldAckNum < ackNum || (oldAckNum > ushort.MaxValue * 0.9f && ackNum < ushort.MaxValue * 0.1f))
 						{
 							seqNumbers[(int)SeqNumberDef.OtherAck] = ackNum;
-							//Debug.Log ("update OtherAck = " + ackNum + " first=" + isInitialUpdate);
 						}
 
 						switch ((QosType)qosType)
@@ -265,7 +356,7 @@ namespace ICKX.Radome
 					savedUncheckedReliableDataStream.Clear();
 					if (savedUncheckedReliableDataStream.Capacity < tempUncheckedReliableDataStream.Capacity)
 					{
-						savedUncheckedReliableDataStream.Capacity *= tempUncheckedReliableDataStream.Capacity;
+						savedUncheckedReliableDataStream.Capacity = tempUncheckedReliableDataStream.Capacity;
 					}
 					savedUncheckedReliableDataStream.WriteBytes(
 						tempUncheckedReliableDataStream.GetUnsafeReadOnlyPtr(), tempUncheckedReliableDataStream.Length);
@@ -285,23 +376,6 @@ namespace ICKX.Radome
 				{
 					seqNumbers[(int)def]++;
 				}
-			}
-		}
-
-		public struct UncheckedReliablePacket
-		{
-			public DataStreamWriter writer;
-			public ushort frameCount;
-
-			public UncheckedReliablePacket(DataStreamWriter writer)
-			{
-				this.writer = writer;
-				frameCount = 0;
-			}
-			public UncheckedReliablePacket(DataStreamWriter writer, ushort count)
-			{
-				this.writer = writer;
-				frameCount = count;
 			}
 		}
 
@@ -327,7 +401,7 @@ namespace ICKX.Radome
 		//public NetworkLinkerHandle handle { get; private set; }
 
 		public int targetPacketSize { get; private set; }
-		public int uncheckedSelfReliablePacketCount { get { return uncheckedSelfReliablePackets.Count; } }
+		public int uncheckedSelfReliablePacketCount { get { return uncheckedSelfReliablePacketCountBuffer[0]; } }
 
 		public T driver { get; private set; }
 		public NetworkConnection connection { get; private set; }
@@ -363,7 +437,9 @@ namespace ICKX.Radome
 
 		public JobHandle LinkerJobHandle;
 
-		private List<UncheckedReliablePacket> uncheckedSelfReliablePackets;
+		private NativeArray<int> uncheckedSelfReliablePacketCountBuffer;
+		private DataStreamWriter uncheckedSelfReliablePacketsWriter;
+		private DataStreamWriter uncheckedNewSelfReliablePacketsWriter;
 
 		private DataStreamWriter[] packetChunksQosTable;
 		private NativeList<ushort>[] packetLengthsQosTable;
@@ -379,7 +455,9 @@ namespace ICKX.Radome
 			flags = new NativeArray<byte>(3, Allocator.Persistent);
 			latencyLog = new NativeArray<ushort>(16, Allocator.Persistent);
 
-			uncheckedSelfReliablePackets = new List<UncheckedReliablePacket>(16);
+			uncheckedSelfReliablePacketCountBuffer = new NativeArray<int> (1, Allocator.Persistent);
+			uncheckedSelfReliablePacketsWriter = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
+			uncheckedNewSelfReliablePacketsWriter = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
 
 			uncheckedRecieveReliableDataStream = new DataStreamWriter(ushort.MaxValue, Allocator.Persistent);
 			tempRecieveReliableDataStream = new DataStreamWriter(ushort.MaxValue, Allocator.Persistent);
@@ -418,13 +496,9 @@ namespace ICKX.Radome
 				packetLengthsQosTable[i].Dispose();
 			}
 
-			for (int i = 0; i < uncheckedSelfReliablePackets.Count; i++)
-			{
-				if (uncheckedSelfReliablePackets[i].writer.IsCreated)
-				{
-					uncheckedSelfReliablePackets[i].writer.Dispose();
-				}
-			}
+			uncheckedSelfReliablePacketCountBuffer.Dispose ();
+			uncheckedSelfReliablePacketsWriter.Dispose ();
+			uncheckedNewSelfReliablePacketsWriter.Dispose ();
 		}
 
 		public void Reconnect(NetworkConnection connection)
@@ -461,7 +535,10 @@ namespace ICKX.Radome
 
 		public ushort Send(DataStreamWriter data, QosType qos, bool noChunk = false)
 		{
-			//Assert.IsTrue (LinkerJobHandle.IsCompleted);
+			Assert.IsTrue (LinkerJobHandle.IsCompleted);
+			if (!LinkerJobHandle.IsCompleted) {
+				throw new System.NotSupportedException ("Update/LateUpdate/FixedUpdateでのみSendメソッドは利用できます");
+			}
 			//Debug.Log ("Send " + qos + " : dataLen=" + data.Length);
 
 			ushort dataLength = (ushort)data.Length;
@@ -478,12 +555,8 @@ namespace ICKX.Radome
 					if (qos == QosType.Reliable)
 					{
 						IncrementSequenceNumber(SeqNumberDef.SelfSeq);
-						writer = new DataStreamWriter(7 + data.Length, Allocator.Persistent);
 					}
-					else
-					{
-						writer = new DataStreamWriter(7 + data.Length, Allocator.Temp);
-					}
+					writer = new DataStreamWriter (7 + data.Length, Allocator.Temp);
 
 					writer.Write((byte)qos);
 					writer.Write(seqNumbers[(int)SeqNumberDef.SelfSeq]);
@@ -494,14 +567,17 @@ namespace ICKX.Radome
 
 					if (qos == QosType.Reliable)
 					{
-						uncheckedSelfReliablePackets.Add(new UncheckedReliablePacket(writer));
+						uncheckedSelfReliablePacketCountBuffer[0] += 1;
+
+						if (uncheckedSelfReliablePacketsWriter.Capacity < uncheckedSelfReliablePacketsWriter.Length + writer.Length + 6) {
+							uncheckedSelfReliablePacketsWriter.Capacity *= 2;
+						}
+						uncheckedSelfReliablePacketsWriter.Write ((ushort)(writer.Length));
+						uncheckedSelfReliablePacketsWriter.Write (Time.frameCount);
+						uncheckedSelfReliablePacketsWriter.WriteBytes (writer.GetUnsafeReadOnlyPtr (), writer.Length);
 					}
-					else
-					{
-						writer.Dispose();
-					}
-				}
-				else
+					writer.Dispose ();
+				} else
 				{
 					writer = packetChunksQosTable[(byte)qos - 1];
 
@@ -597,97 +673,18 @@ namespace ICKX.Radome
 			{
 				chunkCountQosTable[i] = 0;
 			}
-		}
 
-		public void SendReliableChunks()
-		{
-			if (!EnableConnection || !CompleteConnection) return;
-
-			var packetChunks = this.packetChunksQosTable[(int)QosType.Reliable - 1];
-			var packetLengths = this.packetLengthsQosTable[(int)QosType.Reliable - 1];
-
-			var reader = new DataStreamReader(packetChunks, 0, packetChunks.Length);
-			var ctx = default(DataStreamReader.Context);
-
-			for (int i = 0; i < packetLengths.Length; i++)
-			{
-				ushort packetDataLen = packetLengths[i];
-				if (packetDataLen == 0) continue;
-				var packet = reader.ReadChunk(ref ctx, packetDataLen);
-
-				var temp = new DataStreamWriter(packetDataLen, Allocator.Persistent);
-				unsafe
-				{
-					byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
-					temp.WriteBytes(packetPtr, packetDataLen);
-				}
-				//Debug.Log ("SendReliableChunksJob ChunkIndex = " + i + ", packetDataLen=" + packetDataLen);
-				connection.Send(driver, temp);
-
-				uncheckedSelfReliablePackets.Add(new UncheckedReliablePacket(temp));
-			}
-
-			if (uncheckedSelfReliablePackets.Count > 0)
-			{
-				//相手が受け取ったSeqNumberのパケットを解放.
-				int currentSeqNum = seqNumbers[(int)SeqNumberDef.SelfSeq];
-				int otherAckNum = seqNumbers[(int)SeqNumberDef.OtherAck];
-				int oldestSeqNum = (seqNumbers[(int)SeqNumberDef.SelfSeq] - uncheckedSelfReliablePackets.Count + 1);
-
-				if ((oldestSeqNum < ushort.MaxValue / 2) && (otherAckNum > ushort.MaxValue / 2))
-				{
-					otherAckNum -= ushort.MaxValue + 1;
-				}
-
-				int releaseCount = (otherAckNum - oldestSeqNum + 1);
-				//Debug.Log ("releaseCount : " + releaseCount + ", " + uncheckedSelfReliablePackets.Count);
-				//Debug.Log (seqNumbers[(int)SeqNumberDef.SelfSeq] + " / " + seqNumbers[(int)SeqNumberDef.SelfAck] + " / " + seqNumbers[(int)SeqNumberDef.OtherSeq] + " / " + seqNumbers[(int)SeqNumberDef.OtherAck]);
-
-				for (int i = 0; i < releaseCount; i++)
-				{
-					if (uncheckedSelfReliablePackets.Count > 0)
-					{
-						var packet = uncheckedSelfReliablePackets[0];
-						if (packet.writer.IsCreated)
-						{
-							packet.writer.Dispose();
-							uncheckedSelfReliablePackets.RemoveAt(0);
-						}
-						else
-						{
-							Debug.LogError("writer is not created : " + i);
-						}
-					}
-				}
-
-				//受け取り確認できてないパケットを再送
-				for (int i = 0; i < uncheckedSelfReliablePackets.Count; i++)
-				{
-					if (!uncheckedSelfReliablePackets[i].writer.IsCreated) continue;
-					ushort frameCount = uncheckedSelfReliablePackets[i].frameCount;
-					//タイムアウト
-					if (frameCount > NetworkLinkerConstants.TimeOutFrameCount)
-					{
-						Debug.LogWarning("uncheckedSelfReliablePackets FrameCount TimeOut");
-					}
-
-					if (Mathf.IsPowerOfTwo(frameCount))
-					{
-						if (frameCount >= 16)
-						{
-							Debug.Log("ResendUncheckedPacket : index=" + i + ", frameCount=" + frameCount);
-						}
-
-						//時間が経つごとに送信間隔を開ける n乗のフレームの時だけ送る
-						connection.Send(driver, uncheckedSelfReliablePackets[i].writer);
-					}
-					var uncheck = uncheckedSelfReliablePackets[i];
-					uncheckedSelfReliablePackets[i] = new UncheckedReliablePacket(uncheck.writer, (ushort)(uncheck.frameCount + 1));
+			uncheckedSelfReliablePacketsWriter.Clear ();
+			if(uncheckedNewSelfReliablePacketsWriter.Length > 0) {
+				unsafe {
+					uncheckedSelfReliablePacketsWriter.WriteBytes (
+						uncheckedNewSelfReliablePacketsWriter.GetUnsafeReadOnlyPtr (), uncheckedNewSelfReliablePacketsWriter.Length);
 				}
 			}
+			uncheckedNewSelfReliablePacketsWriter.Clear ();
 		}
 
-		public JobHandle ScheduleSendUnreliableChunks(JobHandle jobHandle)
+		public JobHandle ScheduleSendChunks(JobHandle jobHandle)
 		{
 			if (!EnableConnection || !CompleteConnection)
 			{
@@ -696,24 +693,27 @@ namespace ICKX.Radome
 
 			var sendUnreliableChunksJob = new SendUnreliableChunksJob()
 			{
-				driver = this.driver,
-				connection = this.connection,
-				packetChunks = this.packetChunksQosTable[(int)QosType.Unreliable - 1],
-				packetLengths = this.packetLengthsQosTable[(int)QosType.Unreliable - 1],
+				driver = driver,
+				connection = connection,
+				packetChunks = packetChunksQosTable[(int)QosType.Unreliable - 1],
+				packetLengths = packetLengthsQosTable[(int)QosType.Unreliable - 1],
 			};
 
 			LinkerJobHandle = sendUnreliableChunksJob.Schedule(jobHandle);
+			
+			var sendReliableChunksJob = new SendReliableChunksJob () {
+				driver = driver,
+				connection = connection,
+				seqNumbers = seqNumbers,
+				packetChunks = packetChunksQosTable[(int)QosType.Reliable - 1],
+				packetLengths = packetLengthsQosTable[(int)QosType.Reliable - 1],
+				uncheckedPacketCount = uncheckedSelfReliablePacketCountBuffer,
+				uncheckedPacketsWriter = uncheckedSelfReliablePacketsWriter,
+				uncheckedNewPacketsWriter = uncheckedNewSelfReliablePacketsWriter,
+				currentFrame = Time.frameCount,
+			};
 
-			//var sendReliableChunksJob = new SendReliableChunksJob () {
-			//    driver = this.driver,
-			//    connection = this.connection,
-			//    linkerHandle = this.handle,
-			//    seqNumbers = this.seqNumbers,
-			//    packetChunks = this.packetChunksQosTable[(int)QosType.Reliable - 1],
-			//    packetLengths = this.packetLengthsQosTable[(int)QosType.Reliable - 1],
-			//};
-
-			//LinkerJobHandle = sendReliableChunksJob.Schedule (LinkerJobHandle);
+			LinkerJobHandle = sendReliableChunksJob.Schedule (LinkerJobHandle);
 			return LinkerJobHandle;
 		}
 
@@ -733,8 +733,8 @@ namespace ICKX.Radome
 
 			var updateJob = new UpdateJob()
 			{
-				driver = this.driver,
-				connection = this.connection,
+				driver = driver,
+				connection = connection,
 				flags = flags,
 				seqNumbers = seqNumbers,
 				savedUncheckedReliableDataStream = uncheckedRecieveReliableDataStream,

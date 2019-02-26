@@ -7,6 +7,7 @@ using Unity.Jobs;
 using Unity.Networking.Transport;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using UnityEngine;
+using UnityEngine.Profiling;
 using UdpCNetworkDriver = Unity.Networking.Transport.BasicNetworkDriver<Unity.Networking.Transport.IPv4UDPSocket>;
 
 namespace ICKX.Radome {
@@ -82,11 +83,14 @@ namespace ICKX.Radome {
 		public List<NetworkLinker<Driver>> networkLinkers;
 		public List<PlayerInfo> activePlayerInfoList = new List<PlayerInfo> (16);
 
-		public PlayerInfo MyPlayerInfo { get; protected set; }
+		private DataStreamWriter relayWriter;
 
+		public PlayerInfo MyPlayerInfo { get; protected set; }
+		
 		public ServerNetworkManager (PlayerInfo playerInfo) : base () {
 			MyPlayerInfo = playerInfo;
-        }
+			relayWriter = new DataStreamWriter (NetworkParameterConstants.MTU, Allocator.Persistent);
+		}
 
         public override void Dispose () {
             if (state != State.Offline) {
@@ -95,7 +99,8 @@ namespace ICKX.Radome {
             if(driver.IsCreated) {
                 driver.Dispose ();
             }
-            base.Dispose ();
+			relayWriter.Dispose ();
+			base.Dispose ();
         }
 
 		protected void Start () {
@@ -448,20 +453,20 @@ namespace ICKX.Radome {
 
                 bool finish = false;
 
-                //受け取ったパケットを解析
-                for (int j = 0; j < linker.dataStreams.Length; j++) {
+				//受け取ったパケットを解析
+				for (int j = 0; j < linker.dataStreams.Length; j++) {
 					var stream = linker.dataStreams[j];
 					var ctx = default (DataStreamReader.Context);
 					if(!ReadQosHeader (stream, ref ctx, out var qosType, out var seqNum, out var ackNum)) {
 						continue;
 					}
-                    //chunkをバラして解析
-                    while (!finish) {
+					//chunkをバラして解析
+					while (!finish) {
 						if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2, out ushort targetPlayerId, out ushort senderPlayerId)) {
 							break;
 						}
 
-						if(targetPlayerId == ushort.MaxValue - 1) {
+						if (targetPlayerId == ushort.MaxValue - 1) {
 							//Multi Targetの場合
 							ushort len = chunk.ReadUShort (ref ctx2);
 							for (int k=0;k<len;k++) {
@@ -484,8 +489,8 @@ namespace ICKX.Radome {
 							//自分宛パケットの解析
 							finish = DeserializePacket (senderPlayerId, type, ref chunk, ref ctx2);
                         }
-                    }
-                    if(finish) {
+					}
+					if (finish) {
                         if(state == State.Offline) {
                             //server停止ならUpdate完全終了
                             return;
@@ -500,25 +505,24 @@ namespace ICKX.Radome {
 		}
 
 		private void RelayPacket (QosType qosType, ushort targetPlayerId, ushort senderPlayerId, DataStreamReader chunk) {
-			using (var writer = new DataStreamWriter (chunk.Length, Allocator.Temp)) {
-				unsafe {
-					byte* chunkPtr = chunk.GetUnsafeReadOnlyPtr ();
-					writer.WriteBytes (chunkPtr, (ushort)chunk.Length);
+			relayWriter.Clear ();
+			unsafe {
+				byte* chunkPtr = chunk.GetUnsafeReadOnlyPtr ();
+				relayWriter.WriteBytes (chunkPtr, (ushort)chunk.Length);
+			}
+			if (targetPlayerId == ushort.MaxValue) {
+				for (int k = 1; k < networkLinkers.Count; k++) {
+					if (senderPlayerId == k) continue;
+					if (k >= networkLinkers.Count) continue;
+					var relayLinker = networkLinkers[k];
+					if (relayLinker == null) continue;
+					relayLinker.Send (relayWriter, qosType);
 				}
-				if (targetPlayerId == ushort.MaxValue) {
-					for (int k = 1; k < networkLinkers.Count; k++) {
-						if (senderPlayerId == k) continue;
-						if (k >= networkLinkers.Count) continue;
-						var relayLinker = networkLinkers[k];
-						if (relayLinker == null) continue;
-						relayLinker.Send (writer, qosType);
-					}
-				} else {
-					if (targetPlayerId >= networkLinkers.Count) {
-						var relayLinker = networkLinkers[targetPlayerId];
-						if (relayLinker != null) {
-							relayLinker.Send (writer, qosType);
-						}
+			} else {
+				if (targetPlayerId >= networkLinkers.Count) {
+					var relayLinker = networkLinkers[targetPlayerId];
+					if (relayLinker != null) {
+						relayLinker.Send (relayWriter, qosType);
 					}
 				}
 			}
@@ -570,25 +574,25 @@ namespace ICKX.Radome {
 
 			if (!isFirstUpdateComplete) return;
 
-            //Unreliableなパケットの送信
-            var linkerJobs = new NativeArray<JobHandle> (networkLinkers.Count, Allocator.Temp);
-            for (int i = 0; i < networkLinkers.Count; i++) {
-                if (networkLinkers[i] != null) {
-                    linkerJobs[i] = networkLinkers[i].ScheduleSendUnreliableChunks (default (JobHandle));
-                }
-            }
-            jobHandle = JobHandle.CombineDependencies (linkerJobs);
-			JobHandle.ScheduleBatchedJobs ();
-
 			//main thread処理
 			for (int i = 0; i < networkLinkers.Count; i++) {
 				if (networkLinkers[i] != null) {
 					if (state == State.Online || state == State.Disconnecting) {
 						networkLinkers[i].SendMeasureLatencyPacket ();
-						networkLinkers[i].SendReliableChunks ();
+						//						networkLinkers[i].SendReliableChunks ();
 					}
 				}
 			}
+
+			//Unreliableなパケットの送信
+			var linkerJobs = new NativeArray<JobHandle> (networkLinkers.Count, Allocator.Temp);
+            for (int i = 0; i < networkLinkers.Count; i++) {
+                if (networkLinkers[i] != null) {
+                    linkerJobs[i] = networkLinkers[i].ScheduleSendChunks (default (JobHandle));
+                }
+            }
+            jobHandle = JobHandle.CombineDependencies (linkerJobs);
+			JobHandle.ScheduleBatchedJobs ();
 
 			//driverの更新
 			jobHandle = driver.ScheduleUpdate (jobHandle);

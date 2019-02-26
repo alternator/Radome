@@ -203,7 +203,7 @@ namespace ICKX.Radome {
 
 			//受信パケットに記録した時間が古いものなら使わない.
 			if (progressTime < prevReceiveTime) {
-                Debug.Log ("eject");
+                // Debug.Log ("eject old SyncTransformPacket");
                 return;
             }
 

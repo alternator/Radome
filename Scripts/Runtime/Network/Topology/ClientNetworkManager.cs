@@ -411,10 +411,10 @@ namespace ICKX.Radome {
 			}
 			if (state == State.Online || state == State.Disconnecting) {
 				networkLinker.SendMeasureLatencyPacket ();
-				networkLinker.SendReliableChunks ();
+				//networkLinker.SendReliableChunks ();
 			}
 
-			jobHandle = networkLinker.ScheduleSendUnreliableChunks (default (JobHandle));
+			jobHandle = networkLinker.ScheduleSendChunks (default (JobHandle));
 
 			jobHandle = driver.ScheduleUpdate (jobHandle);
 
