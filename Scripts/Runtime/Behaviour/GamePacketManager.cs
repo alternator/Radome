@@ -116,14 +116,14 @@ namespace ICKX.Radome {
 			OnRecievePacket?.Invoke (senderPlayerId, type, stream, ctx);
 		}
 
-		public static void Send (ushort playerId, DataStreamWriter data, QosType qos, bool noChunk = false) {
+		public static void Send (ushort playerId, DataStreamWriter data, QosType qos) {
 			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
-			NetworkManager.Send (playerId, data, qos, noChunk);
+			NetworkManager.Send (playerId, data, qos);
 		}
 
-		public static void Send (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos, bool noChunk = false) {
+		public static void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
 			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
-			NetworkManager.Send (playerIdList, data, qos, noChunk);
+			NetworkManager.Multicast (playerIdList, data, qos);
 		}
 
 		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {

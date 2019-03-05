@@ -11,10 +11,12 @@ namespace ICKX.Radome {
 	[System.Serializable]
 	public abstract class DefaultPlayerInfo {
 
+		//public ushort playerId;
+
 		public DefaultPlayerInfo () { }
 
 		public virtual void Copy (DefaultPlayerInfo info) {
-
+			//playerId = info.playerId;
 		}
 
 		public virtual int PacketSize => 3;
@@ -62,9 +64,8 @@ namespace ICKX.Radome {
         public delegate void OnRecievePacketEvent (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx);
 
 		public const ushort ServerPlayerId = 0;
-		public const int AdressHeaderSize = 4;
 
-        public State state { get; protected set; } = State.Offline;
+		public State state { get; protected set; } = State.Offline;
 
         public ushort playerId { get; protected set; }
         public bool isLeader { get { return playerId == 0; } }
@@ -141,18 +142,6 @@ namespace ICKX.Radome {
             }
         }
 
-        protected DataStreamWriter CreateSendPacket (DataStreamWriter data, QosType qos, ushort targetId, ushort senderId) {
-            unsafe {
-                byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr (data);
-                ushort dataLength = (ushort)data.Length;
-                var writer = new DataStreamWriter (data.Length + 4, Allocator.Temp);
-                writer.Write (targetId);
-                writer.Write (senderId);
-                writer.WriteBytes (dataPtr, data.Length);
-                return writer;
-            }
-        }
-
 		protected void ExecOnReconnectPlayer (ushort id) {
 			OnReconnectPlayer?.Invoke (id);
 		}
@@ -173,35 +162,36 @@ namespace ICKX.Radome {
             OnRecievePacket?.Invoke (senderPlayerId, type, stream, ctx);
         }
 
-		protected bool ReadQosHeader (DataStreamReader stream, ref DataStreamReader.Context ctx, out QosType qosType, out ushort seqNum, out ushort ackNum) {
+		protected bool ReadQosHeader (DataStreamReader stream, ref DataStreamReader.Context ctx, out QosType qosType
+				, out ushort seqNum, out ushort ackNum, out ushort targetPlayerId, out ushort senderPlayerId) {
 			if (!stream.IsCreated) {
 				qosType = QosType.Empty;
 				seqNum = 0;
 				ackNum = 0;
+				targetPlayerId = 0;
+				senderPlayerId = 0;
 				return false;
 			}
 			qosType = (QosType)stream.ReadByte (ref ctx);
 			seqNum = stream.ReadUShort (ref ctx);
 			ackNum = stream.ReadUShort (ref ctx);
+			targetPlayerId = stream.ReadUShort (ref ctx);
+			senderPlayerId = stream.ReadUShort (ref ctx);
 			return true;
 		}
 
 		protected bool ReadChunkHeader (DataStreamReader stream, ref DataStreamReader.Context ctx
-				, out DataStreamReader chunk, out DataStreamReader.Context ctx2, out ushort targetPlayerId, out ushort senderPlayerId) {
+				, out DataStreamReader chunk, out DataStreamReader.Context ctx2) {
 
 			chunk = default;
 			ctx2 = default;
-			targetPlayerId = 0;
-			senderPlayerId = 0;
 
 			int pos = stream.GetBytesRead (ref ctx);
 			if (pos >= stream.Length) return false;
 			ushort dataLength = stream.ReadUShort (ref ctx);
-			if (dataLength == 0) return false;
-
+			//Debug.Log ("ReadChunkHeader : " + dataLength + " : " + stream.Length + " : " + pos);
+			if (dataLength == 0 || pos + dataLength >= stream.Length) return false;
 			chunk = stream.ReadChunk (ref ctx, dataLength);
-			targetPlayerId = chunk.ReadUShort (ref ctx2);
-			senderPlayerId = chunk.ReadUShort (ref ctx2);
 			return true;
 		}
 
@@ -220,11 +210,9 @@ namespace ICKX.Radome {
         public abstract void OnLastUpdate ();
 
         public abstract bool isFullMesh { get; }
-		public abstract ushort Send (ushort targetPlayerId, DataStreamWriter data, QosType qos, bool noChunk = false);
-		public abstract ushort Send (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos, bool noChunk = false);
+		public abstract ushort Send (ushort targetPlayerId, DataStreamWriter data, QosType qos);
+		public abstract void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos);
 		public abstract void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false);
-        public abstract void SendReliable (ushort targetPlayerId, DataStreamWriter data, QosType qos, System.Action<ushort> onComplete, bool noChunk = false);
-        public abstract void BrodcastReliable (DataStreamWriter data, QosType qos, System.Action<ushort> onComplete, bool noChunk = false);
         public abstract void Stop ();
         public abstract void StopComplete ();
     }

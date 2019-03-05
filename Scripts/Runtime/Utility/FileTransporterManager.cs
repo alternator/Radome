@@ -108,55 +108,59 @@ namespace ICKX.Radome {
 		protected override async void SendFragmentData () {
 			if (sendTransporterTable == null) return;
 
-			if (!sendTransporterTable.Any (p => p.Value.isAwait)) {
-				foreach (int hash in removeTransporterList) {
-					sendTransporterTable.Remove (hash);
+			foreach (var t in sendTransporterTable.Values) {
+				if(t.isAwait) {
+					return;
 				}
-				removeTransporterList.Clear ();
+			}
 
-				foreach (var pair in sendTransporterTable) {
-					var transporter = pair.Value;
-					if (transporter.isAwait) continue;
+			foreach (int hash in removeTransporterList) {
+				sendTransporterTable.Remove (hash);
+			}
+			removeTransporterList.Clear ();
 
-					transporter.isAwait = true;
-					transporter.fileStream.Seek (transporter.pos, SeekOrigin.Begin);
-					int readSize = await transporter.fileStream.ReadAsync (transporter.buffer, 0, SendBytePerFrame);
+			foreach (var pair in sendTransporterTable) {
+				var transporter = pair.Value;
+				if (transporter.isAwait) continue;
 
-					int sendAmount = 0;
-					while (sendAmount < SendBytePerFrame) {
-						//Debug.Log ("sendAmount=" + sendAmount + ", readSize" + readSize + ", pos" + transporter.pos);
-						FlagDef flag = FlagDef.None;
-						int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkParameterConstants.MTU - HeaderSize - 7);
+				transporter.isAwait = true;
+				transporter.fileStream.Seek (transporter.pos, SeekOrigin.Begin);
+				int readSize = await transporter.fileStream.ReadAsync (transporter.buffer, 0, SendBytePerFrame);
 
-						if (transporter.pos + dataSize > transporter.fileStream.Length) {
-							flag = FlagDef.Complete;
-							dataSize = (int)transporter.fileStream.Length - transporter.pos;
-						}
+				int sendAmount = 0;
+				while (sendAmount < SendBytePerFrame) {
+					//Debug.Log ("sendAmount=" + sendAmount + ", readSize" + readSize + ", pos" + transporter.pos);
+					FlagDef flag = FlagDef.None;
+					int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkParameterConstants.MTU - HeaderSize - 7);
 
-						unsafe {
-							fixed (byte* dataPtr = &transporter.buffer[sendAmount]) {
-								using (var writer = new DataStreamWriter (dataSize + 7, Allocator.Temp)) {
-									writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
-									writer.Write ((byte)TransporterType.File);
-									writer.Write (transporter.hash);
-									writer.Write ((byte)flag);
-									//writer.Write ((ushort)dataSize);
-									writer.WriteBytes (dataPtr, dataSize);
-									NetworkManager.Brodcast (writer, QosType.Reliable, true);
-								}
+					if (transporter.pos + dataSize > transporter.fileStream.Length) {
+						flag = FlagDef.Complete;
+						dataSize = (int)transporter.fileStream.Length - transporter.pos;
+					}
+
+					unsafe {
+						fixed (byte* dataPtr = &transporter.buffer[sendAmount]) {
+							using (var writer = new DataStreamWriter (dataSize + 7, Allocator.Temp)) {
+								writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
+								writer.Write ((byte)TransporterType.File);
+								writer.Write (transporter.hash);
+								writer.Write ((byte)flag);
+								//writer.Write ((ushort)dataSize);
+								writer.WriteBytes (dataPtr, dataSize);
+								NetworkManager.Brodcast (writer, QosType.Reliable, true);
 							}
 						}
-						transporter.pos += dataSize;
-						sendAmount += dataSize;
-						if (flag == FlagDef.Complete) {
-							transporter.fileStream.Dispose ();
-							removeTransporterList.Add (transporter.hash);
-							ExeceOnSendComplete (transporter, true);
-							break;
-						}
 					}
-					transporter.isAwait = false;
+					transporter.pos += dataSize;
+					sendAmount += dataSize;
+					if (flag == FlagDef.Complete) {
+						transporter.fileStream.Dispose ();
+						removeTransporterList.Add (transporter.hash);
+						ExeceOnSendComplete (transporter, true);
+						break;
+					}
 				}
+				transporter.isAwait = false;
 			}
 		}
 		

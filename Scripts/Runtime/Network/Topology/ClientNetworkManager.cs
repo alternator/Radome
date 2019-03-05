@@ -50,7 +50,7 @@ namespace ICKX.Radome {
 
 	public abstract class ClientNetworkManager<Driver, PlayerInfo> : NetworkManagerBase
 			where Driver : struct, INetworkDriver where PlayerInfo : DefaultPlayerInfo, new() {
-		
+
 		public override bool isFullMesh => false;
 
 		public Driver driver;
@@ -92,7 +92,7 @@ namespace ICKX.Radome {
 			using (var unregisterPlayerPacket = new DataStreamWriter (3, Allocator.Temp)) {
 				unregisterPlayerPacket.Write ((byte)BuiltInPacket.Type.UnregisterPlayer);
 				unregisterPlayerPacket.Write (playerId);
-				Send (ServerPlayerId, unregisterPlayerPacket, QosType.Reliable, true);
+				Send (ServerPlayerId, unregisterPlayerPacket, QosType.Reliable);
 			}
 			Debug.Log ("Stop");
 		}
@@ -130,11 +130,11 @@ namespace ICKX.Radome {
 
 			if (id == playerId) {
 				//自分のユーザー情報をリストに登録
-				activePlayerInfoList[playerId]  = MyPlayerInfo;
+				activePlayerInfoList[playerId] = MyPlayerInfo;
 
 				//自分のPlayerInfoをサーバーに通知
 				using (var updatePlayerPacket = MyPlayerInfo.CreateUpdatePlayerInfoPacket (playerId)) {
-					Send (0, updatePlayerPacket, QosType.Reliable);
+					Send (ServerPlayerId, updatePlayerPacket, QosType.Reliable);
 				}
 			}
 
@@ -188,47 +188,35 @@ namespace ICKX.Radome {
 			}
 		}
 
-
 		/// <summary>
 		/// Player1人にパケットを送信
 		/// </summary>
-		public override ushort Send (ushort targetPlayerId, DataStreamWriter data, QosType qos, bool noChunk = false) {
+		public override ushort Send (ushort targetPlayerId, DataStreamWriter data, QosType qos) {
 			if (state == State.Offline) {
 				Debug.LogError ("Send Failed : State.Offline");
 				return 0;
 			}
-			ushort seqNum = 0;
-			using (var writer = CreateSendPacket (data, qos, targetPlayerId, playerId)) {
-				seqNum = networkLinker.Send (writer, qos, noChunk);
-			}
-			return seqNum;
+			return networkLinker.Send (data, qos, targetPlayerId, playerId, false);
 		}
 
-		public override ushort Send (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos, bool noChunk = false) {
+		public override void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
 			if (state == State.Offline) {
 				Debug.LogError ("Send Failed : State.Offline");
-				return 0;
+				return;
 			}
-			ushort seqNum = 0;
-			using (var writer = CreateSendPacket (data, qos, playerIdList, playerId)) {
-				seqNum = networkLinker.Send (writer, qos, noChunk);
-			}
-			return seqNum;
-		}
 
-		protected DataStreamWriter CreateSendPacket (DataStreamWriter data, QosType qos, NativeList<ushort> targetIdList, ushort senderId) {
-			unsafe {
-				byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr (data);
-				ushort dataLength = (ushort)data.Length;
-				var writer = new DataStreamWriter (data.Length + 6 + targetIdList.Length * 2, Allocator.Temp);
-				writer.Write (ushort.MaxValue - 1);
-				writer.Write (senderId);
-				writer.Write ((ushort)targetIdList.Length);
-				for (int i = 0; i < targetIdList.Length; i++) {
-					writer.Write (targetIdList[i]);
+			ushort dataLength = (ushort)data.Length;
+			using (var writer = new DataStreamWriter (dataLength + 2 + 2 * playerIdList.Length, Allocator.Temp)) {
+				unsafe {
+					byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr (data);
+					writer.Write ((ushort)playerIdList.Length);
+					for (int i = 0; i < playerIdList.Length; i++) {
+						writer.Write (playerIdList[i]);
+					}
+					writer.WriteBytes (dataPtr, dataLength);
 				}
-				writer.WriteBytes (dataPtr, data.Length);
-				return writer;
+
+				networkLinker.Send (writer, qos, NetworkLinkerConstants.MulticastId, playerId, false);
 			}
 		}
 
@@ -240,22 +228,7 @@ namespace ICKX.Radome {
 				Debug.LogError ("Send Failed : State.Offline");
 				return;
 			}
-			Send (ushort.MaxValue, data, qos, noChunk);
-		}
-
-		/// <summary>
-		/// Player1人にパケットを送信 受け取り確認可能
-		/// </summary>
-		public override void SendReliable (ushort playerId, DataStreamWriter data, QosType qos, System.Action<ushort> onComplete, bool noChunk = false) {
-			throw new System.NotImplementedException ();
-		}
-
-		/// <summary>
-		/// 全Playerにパケットを送信 受け取り確認可能
-		/// </summary>
-		public override void BrodcastReliable (DataStreamWriter data, QosType qos, System.Action<ushort> onComplete, bool noChunk = false) {
-			throw new System.NotImplementedException ();
-			//サーバーに到達したら確定とする
+			networkLinker.Send (data, qos, NetworkLinkerConstants.BroadcastId, playerId, noChunk);
 		}
 
 		/// <summary>
@@ -291,12 +264,12 @@ namespace ICKX.Radome {
 			for (int j = 0; j < networkLinker.dataStreams.Length; j++) {
 				var stream = networkLinker.dataStreams[j];
 				var ctx = default (DataStreamReader.Context);
-				if (!ReadQosHeader (stream, ref ctx, out var qosType, out var seqNum, out var ackNum)) {
+				if (!ReadQosHeader (stream, ref ctx, out var qosType, out var seqNum, out var ackNum, out ushort targetPlayerId, out ushort senderPlayerId)) {
 					continue;
 				}
 				//chunkをバラして解析
 				while (true) {
-					if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2, out ushort targetPlayerId, out ushort senderPlayerId)) {
+					if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2)) {
 						break;
 					}
 					//Debug.Log ("Linker streamLen=" + stream.Length + ", Pos=" + pos + ", chunkLen=" + chunk.Length + ",type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
