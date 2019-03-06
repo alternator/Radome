@@ -281,7 +281,6 @@ namespace ICKX.Radome {
 						while (true) {
 							//Debug.Log ("Linker chunkLen=" + chunk.Length + ", ctx2=" + ctx2.GetReadByteIndex() + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
 							if (!ReadChunkHeader (chunk, ref ctx2, out var chunk2, out var ctx3)) {
-								Debug.Log(string.Join(" ", chunk.ReadBytesAsArray(ref ctx2, chunk.Length - ctx2.GetReadByteIndex ())));
 								break;
 							}
 							byte type2 = chunk2.ReadByte (ref ctx3);
