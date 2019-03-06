@@ -452,13 +452,13 @@ namespace ICKX.Radome {
 						continue;
 					}
 
-					Profiler.BeginSample ("Update First Linker Relay");
 					//Debug.Log ($"{j}, {qosType}, {seqNum}, {ackNum}, {stream.Length}");
 					if (targetPlayerId == NetworkLinkerConstants.MulticastId) {
 						//Multi Targetの場合
 						ushort len = stream.ReadUShort (ref ctx);
 						var ctxMulticast = ctx;
-						var chunk = stream.ReadChunk (ref ctxMulticast, stream.Length - NetworkLinkerConstants.HeaderSize + 2 + 2 * len);
+						ctxMulticast.Add(2 * len);
+						var chunk = stream.ReadChunk (ref ctxMulticast, stream.Length - NetworkLinkerConstants.HeaderSize + 2 * len);
 						for (int k = 0; k < len; k++) {
 							var multiTatgetId = stream.ReadUShort (ref ctx);
 							if (multiTatgetId == 0) {
@@ -473,23 +473,20 @@ namespace ICKX.Radome {
 						RelayPacket (qosType, targetPlayerId, senderPlayerId
 							, stream.ReadChunk(ref ctxBroadcast, stream.Length - NetworkLinkerConstants.HeaderSize));
 					}
-					Profiler.EndSample ();
 
-					Profiler.BeginSample ("Update First Chunk");
 					//chunkをバラして解析
 					while (!finish) {
 						if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2)) {
 							break;
 						}
-						//Debug.Log ("Linker streamLen=" + stream.Length + ", Pos=" + pos + ", chunkLen=" + chunk.Length + ",type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
 						byte type = chunk.ReadByte (ref ctx2);
+						//Debug.Log ("Linker streamLen=" + stream.Length + ", chunkLen=" + chunk.Length + ", type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
 
 						if ((targetPlayerId == playerId || targetPlayerId == NetworkLinkerConstants.BroadcastId)) {
 							//自分宛パケットの解析
 							finish = DeserializePacket (senderPlayerId, type, ref chunk, ref ctx2);
 						}
 					}
-					Profiler.EndSample ();
 					if (finish) {
 						if (state == State.Offline) {
 							//server停止ならUpdate完全終了
@@ -505,25 +502,26 @@ namespace ICKX.Radome {
 		}
 
 		private void RelayPacket (QosType qosType, ushort targetPlayerId, ushort senderPlayerId, DataStreamReader stream) {
+
 			relayWriter.Clear ();
 			unsafe {
 				byte* chunkPtr = stream.GetUnsafeReadOnlyPtr ();
+				relayWriter.Write ((byte)BuiltInPacket.Type.RelayChunkedPacket);
 				relayWriter.WriteBytes (chunkPtr, (ushort)stream.Length);
 			}
 			if (targetPlayerId == NetworkLinkerConstants.BroadcastId) {
 				for (ushort k = 1; k < networkLinkers.Count; k++) {
 					if (senderPlayerId == k) continue;
-					if (k >= networkLinkers.Count) continue;
 					var relayLinker = networkLinkers[k];
 					if (relayLinker == null) continue;
 					//BroadCastならchunk済みなので再度chunk化しない
-					relayLinker.Send (relayWriter, qosType, k, senderPlayerId, true);
+					relayLinker.Send (relayWriter, qosType, NetworkLinkerConstants.BroadcastId, senderPlayerId, true);
 				}
 			} else {
-				if (targetPlayerId >= networkLinkers.Count) {
+				if (targetPlayerId <= networkLinkers.Count) {
 					var relayLinker = networkLinkers[targetPlayerId];
 					if (relayLinker != null) {
-						relayLinker.Send (relayWriter, qosType, targetPlayerId, senderPlayerId, true);
+						relayLinker.Send (relayWriter, qosType, NetworkLinkerConstants.BroadcastId, senderPlayerId, true);
 					}
 				}
 			}

@@ -267,19 +267,32 @@ namespace ICKX.Radome {
 				if (!ReadQosHeader (stream, ref ctx, out var qosType, out var seqNum, out var ackNum, out ushort targetPlayerId, out ushort senderPlayerId)) {
 					continue;
 				}
+
 				//chunkをバラして解析
 				while (true) {
 					if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2)) {
 						break;
 					}
-					//Debug.Log ("Linker streamLen=" + stream.Length + ", Pos=" + pos + ", chunkLen=" + chunk.Length + ",type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
 					byte type = chunk.ReadByte (ref ctx2);
-					DeserializePacket (senderPlayerId, type, ref chunk, ref ctx2);
+					//Debug.Log ("Linker streamLen=" + stream.Length + ", chunkLen=" + chunk.Length + ",type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
+					if (type != (byte)BuiltInPacket.Type.RelayChunkedPacket) {
+						DeserializePacket (senderPlayerId, type, ref chunk, ctx2);
+					}else {
+						while (true) {
+							//Debug.Log ("Linker chunkLen=" + chunk.Length + ", ctx2=" + ctx2.GetReadByteIndex() + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
+							if (!ReadChunkHeader (chunk, ref ctx2, out var chunk2, out var ctx3)) {
+								Debug.Log(string.Join(" ", chunk.ReadBytesAsArray(ref ctx2, chunk.Length - ctx2.GetReadByteIndex ())));
+								break;
+							}
+							byte type2 = chunk2.ReadByte (ref ctx3);
+							DeserializePacket (senderPlayerId, type2, ref chunk2, ctx3);
+						}
+					}
 				}
 			}
 		}
 
-		protected virtual void DeserializePacket (ushort senderPlayerId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2) {
+		protected virtual void DeserializePacket (ushort senderPlayerId, byte type, ref DataStreamReader chunk, DataStreamReader.Context ctx2) {
 			//自分宛パケットの解析
 			switch (type) {
 				case (byte)BuiltInPacket.Type.RegisterPlayer:

@@ -627,6 +627,11 @@ namespace Unity.Networking.Transport
         public struct Context
         {
             internal int m_ReadByteIndex;
+
+			public void Add (int value) {
+				m_ReadByteIndex += value;
+			}
+			public int GetReadByteIndex () { return m_ReadByteIndex; }
         }
 
         internal byte* m_bufferPtr;
