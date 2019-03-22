@@ -35,12 +35,7 @@ namespace ICKX.Radome {
 			}
 
 			if (GamePacketManager.IsLeader) {
-				var identity = GetIdentityInGroup (netId);
-				if(identity) {
-					identity.SetAuthor (author);
-				} else {
-					Debug.LogError ($"netId={netId} is not found in group");
-				}
+				RecieveChangeAuthorInGroup(netId, author);
 			} else {
 				SendPacketChangeAuthor (netId, author);
 			}
@@ -56,7 +51,7 @@ namespace ICKX.Radome {
 				return;
 			}
 			if (GamePacketManager.IsLeader) {
-				identity.SetAuthor (author);
+				RecieveChangeAuthorInGroup(identity.netId, author);
 			} else {
 				SendPacketChangeAuthor (identity.netId, author);
 			}
@@ -76,14 +71,20 @@ namespace ICKX.Radome {
 			if (GamePacketManager.IsLeader) {
 				//Hostではauthorの整合性を確認
 				if (netId < m_identityList.Count) {
-					m_identityList[netId].SetAuthor (author);
-					//Clientに通達する
-					using (var packet = new DataStreamWriter (9, Allocator.Temp)) {
-						packet.Write ((byte)BuiltInPacket.Type.ChangeAuthor);
-						packet.Write (m_groupHash);
-						packet.Write (netId);
-						packet.Write (author);
-						GamePacketManager.Brodcast (packet, QosType.Reliable);
+					var identity = m_identityList[netId];
+					if (identity) {
+						identity.SetAuthor(author);
+
+					    //Clientに通達する
+					    using (var packet = new DataStreamWriter (9, Allocator.Temp)) {
+						    packet.Write ((byte)BuiltInPacket.Type.ChangeAuthor);
+						    packet.Write (m_groupHash);
+						    packet.Write (netId);
+						    packet.Write (author);
+						    GamePacketManager.Brodcast (packet, QosType.Reliable);
+					    }
+					} else {
+						Debug.LogError($"netId={netId} is not found in group");
 					}
 				}
 			} else {
