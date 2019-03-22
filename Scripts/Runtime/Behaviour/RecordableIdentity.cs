@@ -68,9 +68,26 @@ namespace ICKX.Radome {
                 }
                 m_recordableBehaviourList[component.componentIndex] = component;
             }
+
+            if(netId != 0) {
+                if(GamePacketManager.PlayerId != 0) {
+					//プレイヤーIDが割り振った後ならすぐAuthorチェック
+					RecordableIdentityManager.RequestSyncAuthor (this);
+				} else {
+					GamePacketManager.OnRegisterPlayer += OnConnect;
+					GamePacketManager.OnReconnectPlayer += OnConnect;
+				}
+			}
         }
 
-        private void LateUpdate () {
+		private void OnConnect (ushort playerId) {
+			if(playerId == GamePacketManager.PlayerId) {
+				//プレイヤーIDが割り振られたときにAuthorチェック
+				RecordableIdentityManager.RequestSyncAuthor (this);
+			}
+		}
+
+		private void LateUpdate () {
             UpdateGridId ();
         }
 

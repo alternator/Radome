@@ -20,6 +20,7 @@ namespace ICKX.Radome {
 
             ReserveNetId,
             ChangeAuthor,
+			SyncAuthor,
             SyncTransform,
             BehaviourRpc,
 

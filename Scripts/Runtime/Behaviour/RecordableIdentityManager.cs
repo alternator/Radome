@@ -160,17 +160,31 @@ namespace ICKX.Radome {
 		/// </summary>
 		public static void RequestChangeAuthor (RecordableIdentity identity, ushort author) {
 			if (identity == null) return;
+			RequestChangeAuthor (identity.sceneHash, identity.netId, author);
+		}
 
-			if(identity.sceneHash == 0) {
-				Instance.RequestChangeAuthorInGroup (identity, author);
-			}else {
-				if (m_recordableSceneIdentitTable.TryGetValue (identity.sceneHash, out RecordableSceneIdentity sceneIdentity)) {
-					sceneIdentity.RequestChangeAuthorInGroup (identity, author);
+		/// <summary>
+		/// HostのAuthor情報でIDを同期してもらう
+		/// </summary>
+		public static void RequestSyncAuthor (int sceneHash, ushort netId) {
+			if (sceneHash == 0) {
+				Instance.RequestSyncAuthorInGroup (netId);
+			} else {
+				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out RecordableSceneIdentity sceneIdentity)) {
+					sceneIdentity.RequestSyncAuthorInGroup (netId);
 				} else {
-					Debug.LogError ($"sceneHash = {identity.sceneHash} is not found");
+					Debug.LogError ($"sceneHash = {sceneHash} is not found");
 					return;
 				}
 			}
+		}
+
+		/// <summary>
+		/// HostのAuthor情報でIDを同期してもらう
+		/// </summary>
+		public static void RequestSyncAuthor (RecordableIdentity identity) {
+			if (identity == null) return;
+			RequestSyncAuthor (identity.sceneHash, identity.netId);
 		}
 
 		private static void OnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
@@ -183,6 +197,11 @@ namespace ICKX.Radome {
 					ushort netId = recievePacket.ReadUShort (ref ctx);
 					ushort author = recievePacket.ReadUShort (ref ctx);
 					RecieveChangeAuthor (sceneHash, netId, author);
+					break;
+				case BuiltInPacket.Type.SyncAuthor:
+					int sceneHash2 = recievePacket.ReadInt (ref ctx);
+					ushort netId2 = recievePacket.ReadUShort (ref ctx);
+					RecieveSyncAuthor (sceneHash2, netId2);
 					break;
 				case BuiltInPacket.Type.SyncTransform:
 					RecieveSyncTransform (senderPlayerId, ref recievePacket, ref ctx);
@@ -225,6 +244,19 @@ namespace ICKX.Radome {
 				RecordableSceneIdentity sceneIdentity;
 				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
 					sceneIdentity.RecieveChangeAuthorInGroup (netId, author);
+				} else {
+					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
+				}
+			}
+		}
+		
+		private static void RecieveSyncAuthor (int sceneHash, ushort netId) {
+			if (sceneHash == 0) {
+				Instance.RecieveSyncAuthorInGroup (netId);
+			} else {
+				RecordableSceneIdentity sceneIdentity;
+				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
+					sceneIdentity.RecieveSyncAuthorInGroup (netId);
 				} else {
 					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
 				}
