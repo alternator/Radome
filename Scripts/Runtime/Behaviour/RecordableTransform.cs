@@ -201,6 +201,12 @@ namespace ICKX.Radome {
             var velocity = packet.ReadVector3 (ref ctx);
             var anglerVelocity = packet.ReadVector3 (ref ctx);
 
+			//progressTime < prevReceiveTimeで止まる対策
+			//UDPで2秒以上送れることはほぼないので、その場合はprevReceiveTimeをリセット
+			if (Mathf.Abs( prevReceiveTime - progressTime) > 2000) {
+				prevReceiveTime = progressTime;
+			}
+
 			//受信パケットに記録した時間が古いものなら使わない.
 			if (progressTime < prevReceiveTime) {
                 // Debug.Log ("eject old SyncTransformPacket");
