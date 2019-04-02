@@ -54,6 +54,7 @@ namespace ICKX.Radome {
             CacheTransform = transform;
             CacheRigidbody = GetComponent<Rigidbody> ();
             CacheRecordableIdentity = GetComponent<RecordableIdentity> ();
+            CacheRecordableIdentity.RegisterTransform(this);
 
             if (CacheRigidbody) {
                 defaultIsKinematic = CacheRigidbody.isKinematic;
@@ -203,7 +204,7 @@ namespace ICKX.Radome {
 
 			//progressTime < prevReceiveTimeで止まる対策
 			//UDPで2秒以上送れることはほぼないので、その場合はprevReceiveTimeをリセット
-			if (Mathf.Abs( prevReceiveTime - progressTime) > 2000) {
+			if (Mathf.Abs( (long)prevReceiveTime - (long)progressTime) > 2000) {
 				Debug.LogWarning ($"RecieveSyncTransformの異常値 prevReceiveTime={prevReceiveTime} : progressTime={progressTime}");
 				prevReceiveTime = progressTime;
 			}

@@ -56,9 +56,12 @@ namespace ICKX.Radome {
 
         private List<RecordableBehaviour> m_recordableBehaviourList;
 
+        internal void RegisterTransform (RecordableTransform trans) {
+            CacheRecordableTransform = trans;
+        }
+
 		private void Awake () {
             CacheTransform = transform;
-            CacheRecordableTransform = GetComponent<RecordableTransform> ();
 
             var behaviours = GetComponents<RecordableBehaviour> ();
             m_recordableBehaviourList = new List<RecordableBehaviour>(behaviours.Length);
