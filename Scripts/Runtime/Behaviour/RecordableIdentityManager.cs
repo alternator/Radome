@@ -37,10 +37,8 @@ namespace ICKX.Radome {
 			get { return m_recordableSceneIdentitTable; }
 		}
 
-		public static long currentUnixTime { get; private set; }
-
 		public static uint progressTimeSinceStartup {
-			get { return (uint)(currentUnixTime - GamePacketManager.LeaderStartTime); }
+			get { return GamePacketManager.progressTimeSinceStartup; }
 		}
 
 		protected void Awake () {
@@ -77,10 +75,6 @@ namespace ICKX.Radome {
 
 		private void OnDestroy () {
 			GamePacketManager.OnRecievePacket -= OnRecievePacket;
-		}
-
-		private void Update () {
-			currentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds ();
 		}
 
 		public static void AddRecordableSceneIdentity (int sceneHash, RecordableSceneIdentity sceneIdentity) {

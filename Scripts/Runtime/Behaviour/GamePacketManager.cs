@@ -4,16 +4,25 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Networking.Transport;
 using UnityEngine;
+using UnityEngine.Experimental.LowLevel;
 using static ICKX.Radome.NetworkManagerBase;
+using UpdateLoop = UnityEngine.Experimental.PlayerLoop.Update;
 
 namespace ICKX.Radome {
 
-    public class GamePacketManager {
+	public class GamePacketManager {
 
-        [RuntimeInitializeOnLoadMethod]
-        static void Initialize () {
-            localStartTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds ();
-        }
+		public struct GamePacketManagerUpdate { }
+
+		[RuntimeInitializeOnLoadMethod]
+		static void Initialize () {
+			localStartTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds ();
+
+			CustomPlayerLoopUtility.InsertLoopFirst(typeof(UpdateLoop), new PlayerLoopSystem() {
+				type = typeof(GamePacketManagerUpdate),
+				updateDelegate = Update
+			});
+		}
 
 		/// <summary>
 		/// 現在Gameで利用するネットワーク
@@ -42,37 +51,47 @@ namespace ICKX.Radome {
 		/// </summary>
 		public static event OnRecievePacketEvent OnRecievePacket = null;
 
-        public static bool IsLeader {
-            get {
-                if (NetworkManager == null) {
-                    return true;
-                } else {
-                    return NetworkManager.isLeader;
-                }
-            }
-        }
+		public static bool IsLeader {
+			get {
+				if (NetworkManager == null) {
+					return true;
+				} else {
+					return NetworkManager.isLeader;
+				}
+			}
+		}
 
-        public static ushort PlayerId {
-            get {
-                if(NetworkManager == null) {
-                    return 0;
-                }else {
-                    return NetworkManager.playerId;
-                }
-            }
-        }
+		public static ushort PlayerId {
+			get {
+				if(NetworkManager == null) {
+					return 0;
+				}else {
+					return NetworkManager.playerId;
+				}
+			}
+		}
 
-        private static long localStartTime;
+		private static long localStartTime;
 
-        public static long LeaderStartTime {
-            get {
-                if (NetworkManager == null) {
-                    return localStartTime;
-                } else {
-                    return NetworkManager.leaderStatTime;
-                }
-            }
-        }
+		public static long LeaderStartTime {
+			get {
+				if (NetworkManager == null) {
+					return localStartTime;
+				} else {
+					return NetworkManager.leaderStatTime;
+				}
+			}
+		}
+
+		public static long currentUnixTime { get; private set; }
+
+		public static uint progressTimeSinceStartup {
+			get { return (uint)(currentUnixTime - LeaderStartTime); }
+		}
+
+		private static void Update() {
+			currentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+		}
 
 		public static ushort GetPlayerCount () {
 			return NetworkManager.GetPlayerCount () ;
@@ -89,9 +108,9 @@ namespace ICKX.Radome {
 			NetworkManager.OnReconnectPlayer += ExecOnReconnectPlayer;
 			NetworkManager.OnDisconnectPlayer += ExecOnDisconnectPlayer;
 			NetworkManager.OnRegisterPlayer += ExecOnRegisterPlayer;
-            NetworkManager.OnUnregisterPlayer += ExecOnUnregisterPlayer;
-            NetworkManager.OnRecievePacket += ExecOnRecievePacket;
-        }
+			NetworkManager.OnUnregisterPlayer += ExecOnUnregisterPlayer;
+			NetworkManager.OnRecievePacket += ExecOnRecievePacket;
+		}
 
 		public static void RemoveNetworkManager () {
 			if (NetworkManager != null) {
@@ -127,9 +146,9 @@ namespace ICKX.Radome {
 		}
 
 		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
-            if (NetworkManager == null || NetworkManager.state == State.Offline) return;
-            NetworkManager.Brodcast (data, qos, noChunk);
-        }
+			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
+			NetworkManager.Brodcast (data, qos, noChunk);
+		}
 
-    }
+	}
 }
