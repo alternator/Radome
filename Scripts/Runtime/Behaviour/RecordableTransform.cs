@@ -232,6 +232,7 @@ namespace ICKX.Radome {
 				CacheRigidbody.angularVelocity = anglerVelocity;
 			}
 
+			forceRecieveFrag = false;
 			prevReceiveTime = progressTime;
 			recPosition = position;
 			recRotation = rotation;
