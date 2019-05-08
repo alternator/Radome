@@ -136,7 +136,7 @@ namespace ICKX.Radome {
 		}
 
 		// すべてのClientが切断したら呼ぶ
-		public override void StopComplete () {
+		protected override void StopComplete () {
 			if (state == State.Offline) {
 				Debug.LogError ("CompleteStop Failed  currentState = " + state);
 				return;

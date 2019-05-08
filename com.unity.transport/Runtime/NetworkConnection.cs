@@ -13,6 +13,12 @@ namespace Unity.Networking.Transport
         internal int m_NetworkId;
         internal int m_NetworkVersion;
 
+        public NetworkConnection (int networkId, int networkVersion)
+        {
+            m_NetworkId = networkId;
+            m_NetworkVersion = networkVersion;
+        }
+
         /// <summary>
         /// ConnectionState enumerates available connection states a connection can have.
         /// </summary>

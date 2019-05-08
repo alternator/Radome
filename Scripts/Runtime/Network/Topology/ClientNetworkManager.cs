@@ -98,7 +98,7 @@ namespace ICKX.Radome {
 		}
 
 		// サーバーから切断されたらLinkerを破棄して停止
-		public override void StopComplete () {
+		protected override void StopComplete () {
 			UnregisterPlayerId (playerId);
 
 			playerId = 0;

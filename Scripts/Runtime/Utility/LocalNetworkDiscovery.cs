@@ -55,7 +55,7 @@ public class LocalNetworkDiscovery : MonoBehaviour {
 		}
 	}
 
-	public void OnDestroy () {
+    public void OnDestroy () {
 		if (client == null) return;
 		Stop ();
 	}

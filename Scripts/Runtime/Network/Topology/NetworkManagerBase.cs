@@ -14,11 +14,7 @@ namespace ICKX.Radome {
 		//public ushort playerId;
 
 		public DefaultPlayerInfo () { }
-
-		public virtual void Copy (DefaultPlayerInfo info) {
-			//playerId = info.playerId;
-		}
-
+        
 		public virtual int PacketSize => 3;
 
 		public virtual DataStreamWriter CreateUpdatePlayerInfoPacket (ushort id) {
@@ -214,6 +210,6 @@ namespace ICKX.Radome {
 		public abstract void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos);
 		public abstract void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false);
         public abstract void Stop ();
-        public abstract void StopComplete ();
+        protected abstract void StopComplete ();
     }
 }

@@ -160,7 +160,7 @@ namespace ICKX.Radome {
 						int remaining = uncheckedPacketsReader.Length - uncheckedPacketsReader.GetBytesRead (ref ctx);
 						if (uncheckedPacketCount[0] > 0) {
 							if(remaining < 2) {
-								Debug.LogWarning ($"");
+								Debug.LogWarning ($"ResendReliablePacketsJob remaining={remaining}");
 								break;
 							}
 							var size = uncheckedPacketsReader.ReadUShort (ref ctx);
@@ -179,12 +179,14 @@ namespace ICKX.Radome {
 					}
 					uncheckedNewPacketsWriter.WriteBytes (uncheckedPacketsReader.GetUnsafeReadOnlyPtr (), uncheckedPacketsReader.Length);
 
-					if (uncheckedPacketCount[0] > releaseCount) {
-						uncheckedPacketCount[0] -= releaseCount;
-					} else {
-						uncheckedPacketCount[0] = 0;
-					}
-
+                    if(releaseCount != 0) { 
+					    if (uncheckedPacketCount[0] > releaseCount) {
+                            Debug.Log($"release {releaseCount}, {uncheckedPacketCount[0]}");
+						    uncheckedPacketCount[0] -= releaseCount;
+					    } else {
+						    uncheckedPacketCount[0] = 0;
+					    }
+                    }
 					//受け取り確認できてないパケットを再送
 					uncheckedPacketsReader = new DataStreamReader (uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
 					ctx = new DataStreamReader.Context ();
@@ -196,7 +198,7 @@ namespace ICKX.Radome {
 
 						//タイムアウト
 						if (frameCount > NetworkLinkerConstants.TimeOutFrameCount) {
-							Debug.LogWarning ("uncheckedSelfReliablePackets FrameCount TimeOut Index=" + i);
+							Debug.LogWarning ("uncheckedSelfReliablePackets FrameCount TimeOut Index=" + i + "/" + uncheckedPacketCount[0]);
 						}
 
 						if (Mathf.IsPowerOfTwo (frameCount)) {
@@ -315,7 +317,7 @@ namespace ICKX.Radome {
 
 									//順番待ちのパケットを確定する
 									while (uncheckedreliableStreams.Length != 0) {
-										if (!uncheckedreliableStreams[0].IsCreated) {
+										if (uncheckedreliableStreams[0].IsCreated) {
 											IncrementSequenceNumber (SeqNumberDef.OtherSeq);
 											//Debug.Log ("update OtherSeq = " + seqNumbers[(int)SeqNumberDef.OtherSeq]);
 											//AddChunksInDataStream (uncheckedreliableStreams[0], ref readerCtx);
@@ -500,7 +502,7 @@ namespace ICKX.Radome {
 			this.connection = connection;
 		}
 
-		internal void SyncSeqNum (ushort selfSeqNum) {
+		public void SyncSeqNum (ushort selfSeqNum) {
 			seqNumbers[(int)SeqNumberDef.SelfSeq] = selfSeqNum;
 		}
 
