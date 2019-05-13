@@ -33,24 +33,28 @@ namespace ICKX.Radome {
 			None = 0,
 			Start,
 			Complete,
+			Cancel,
 		}
 
 		public delegate void OnSendCompleteEvent (Transporter transporter, bool isComplete);
 		public delegate void OnRecieveStartEvent (Transporter transporter);
-		public delegate void OnRecieveCompleteEvent (Transporter transporter, bool isComplete);
+		public delegate void OnRecieveCompleteEvent(Transporter transporter, bool isComplete);
 
 		public struct TransporterManagerUpdate {}
 
 		public NetworkManagerBase NetworkManager { get; private set; } = null;
 
-		protected Dictionary<int, Transporter> sendTransporterTable;
-		protected Dictionary<int, Transporter> recieveTransporterTable;
+		protected Dictionary<int, Transporter> _sendTransporterTable;
+		protected Dictionary<int, Transporter> _recieveTransporterTable;
 
 		public event OnSendCompleteEvent OnSendComplete = null;
 		public event OnRecieveStartEvent OnRecieveStart = null;
 		public event OnRecieveCompleteEvent OnRecieveComplete = null;
 
 		public abstract byte Type { get; }
+
+		public IReadOnlyDictionary<int, Transporter> sendTransporterTable { get { return _sendTransporterTable; } }
+		public IReadOnlyDictionary<int, Transporter> recieveTransporterTable { get { return _recieveTransporterTable; } }
 
 		public int SendBytePerFrame = 16 * 1024;
 
@@ -64,13 +68,33 @@ namespace ICKX.Radome {
 
 			networkManager.OnRecievePacket += Instance.OnRecievePacketMethod;
 
-			sendTransporterTable = new Dictionary<int, Transporter> ();
-			recieveTransporterTable = new Dictionary<int, Transporter> ();
+			_sendTransporterTable = new Dictionary<int, Transporter> ();
+			_recieveTransporterTable = new Dictionary<int, Transporter> ();
 
 			CustomPlayerLoopUtility.InsertLoopLast (typeof (UpdateLoop), new PlayerLoopSystem () {
 				type = typeof (TransporterManagerUpdate),
 				updateDelegate = Instance.Update
 			});
+		}
+
+		public bool IsSending (int hash)
+		{
+			return _sendTransporterTable.ContainsKey(hash);
+		}
+
+		public bool SendCancel(int hash) {
+			if (_sendTransporterTable.Remove(hash)) {
+				using (var writer = new DataStreamWriter(7, Allocator.Temp)) {
+					writer.Write((byte)BuiltInPacket.Type.DataTransporter);
+					writer.Write((byte)TransporterType.File);
+					writer.Write(hash);
+					writer.Write((byte)FlagDef.Cancel);
+					NetworkManager.Brodcast(writer, QosType.Reliable, true);
+				}
+				return true;
+			} else {
+				return false;
+			}
 		}
 
 		protected void Update () {
@@ -97,18 +121,23 @@ namespace ICKX.Radome {
 
 				bool isStart = (flag == FlagDef.Start);
 				bool isComplete = (flag == FlagDef.Complete);
+				bool isCancel = (flag == FlagDef.Cancel);
 
 				Transporter transporter;
-				if (isStart) {
+				if(isCancel) {
+					transporter = _recieveTransporterTable[hash];
+					_recieveTransporterTable.Remove (hash);
+					ExecOnRecieveComplete(transporter, false);
+				}else if (isStart) {
 					transporter = RecieveStart (hash, stream, ref ctx);
 					transporter.hash = hash;
-					recieveTransporterTable[hash] = transporter;
+					_recieveTransporterTable[hash] = transporter;
 					OnRecieveStart?.Invoke (transporter);
 				} else {
-					transporter = recieveTransporterTable[hash];
+					transporter = _recieveTransporterTable[hash];
 					RecieveFragmentData (hash, stream, ref ctx, transporter);
 					if (isComplete) {
-						recieveTransporterTable.Remove (hash);
+						_recieveTransporterTable.Remove (hash);
 						RecieveComplete (hash, transporter);
 					}
 				}

@@ -23,18 +23,42 @@ namespace ICKX.Radome {
 	public class LargeBytesTransporterManager : TransporterBaseManager<LargeBytesTransporterManager, LargeBytesTransporter> {
 
 		public override byte Type => (byte)TransporterType.LargeBytes;
+		
+		public bool IsSending(string name)
+		{
+			foreach (var transporter in _sendTransporterTable.Values)
+			{
+				if (transporter.name == name)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
 
+		public bool IsReceiving(string name)
+		{
+			foreach (var transporter in _recieveTransporterTable.Values)
+			{
+				if (transporter.name == name)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
 
-		public void Send (ushort playerId, string name, byte[] data) {
+		public int Send (ushort playerId, string name, byte[] data) {
 			if (data.Length <= NetworkParameterConstants.MTU - HeaderSize) {
 				Debug.LogError ("MTU以下のサイズのデータは送れません");
-				return;
+				return 0;
 			}
 
 			int hash = ByteToHash (data);
 			var transporter = new LargeBytesTransporter (hash, data);
+            transporter.name = name;
 
-			int nameByteCount = DataStreamWriter.GetByteSizeStr (name);
+            int nameByteCount = DataStreamWriter.GetByteSizeStr (name);
 			int dataSize = NetworkParameterConstants.MTU - HeaderSize - 13 - nameByteCount;
 			unsafe {
 				fixed ( byte* dataPtr = &data[transporter.pos]) {
@@ -51,21 +75,23 @@ namespace ICKX.Radome {
 				}
 			}
 			transporter.pos += dataSize;
-			sendTransporterTable[hash] = transporter;
+			_sendTransporterTable[hash] = transporter;
+
+			return hash;
 		}
 
-		public void Broadcast (string name, byte[] data) {
-			Send (ushort.MaxValue, name, data);
+		public int Broadcast (string name, byte[] data) {
+			return Send (ushort.MaxValue, name, data);
 		}
 
 		List<int> removeTransporterList = new List<int> ();
 
 		protected override void SendFragmentData () {
-			if (sendTransporterTable == null) return;
+			if (_sendTransporterTable == null) return;
 
 			removeTransporterList.Clear ();
 
-			foreach (var pair in sendTransporterTable) {
+			foreach (var pair in _sendTransporterTable) {
 				var transporter = pair.Value;
 
 				int sendAmount = 0;
@@ -103,7 +129,7 @@ namespace ICKX.Radome {
 
 
 			foreach (int hash in removeTransporterList) {
-				sendTransporterTable.Remove (hash);
+				_sendTransporterTable.Remove (hash);
 			}
 		}
 

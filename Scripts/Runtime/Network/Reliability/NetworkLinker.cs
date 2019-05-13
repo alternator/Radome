@@ -181,7 +181,7 @@ namespace ICKX.Radome {
 
                     if(releaseCount != 0) { 
 					    if (uncheckedPacketCount[0] > releaseCount) {
-                            Debug.Log($"release {releaseCount}, {uncheckedPacketCount[0]}");
+                            //Debug.Log($"release {releaseCount}, {uncheckedPacketCount[0]}");
 						    uncheckedPacketCount[0] -= releaseCount;
 					    } else {
 						    uncheckedPacketCount[0] = 0;

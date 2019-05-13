@@ -63,63 +63,73 @@ namespace ICKX.Radome {
 		public override byte Type => (byte)TransporterType.File;
 
 		//private byte[] buffer = null;
-
-		public async void Send (ushort playerId, string fileName, System.IO.FileStream fileStream) {
+		
+		public int Send (ushort playerId, string fileName, System.IO.FileStream fileStream) {
 
 			if (fileStream.Length <= NetworkParameterConstants.MTU - HeaderSize) {
 				Debug.LogError ("MTU以下のサイズのデータは送れません");
-				return;
+				return 0;
 			}
 
 			int hash = FileToHash (fileStream);
 			var transporter = new FileTransporter (hash, fileName, fileStream, SendBytePerFrame, 0);
+			var task = SendRoutine(fileStream, transporter, fileName);
 
-			int nameByteCount = DataStreamWriter.GetByteSizeStr (fileName);
+			return hash;
+		}
+
+		private async Task SendRoutine (FileStream fileStream, FileTransporter transporter, string fileName)
+		{
+			fileStream.Seek(0, SeekOrigin.Begin);
+
+			int nameByteCount = DataStreamWriter.GetByteSizeStr(fileName);
 			int dataSize = NetworkParameterConstants.MTU - HeaderSize - 15 - nameByteCount;
-			fileStream.Seek (0, SeekOrigin.Begin);
 			int readSize = await fileStream.ReadAsync(transporter.buffer, 0, dataSize);
 			//Debug.Log ("Start : " + string.Join ("", transporter.buffer));
 
-			unsafe {
-				fixed (byte* dataPtr = transporter.buffer) {
-					using (var writer = new DataStreamWriter (dataSize + 15 + nameByteCount, Allocator.Temp)) {
-						writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
-						writer.Write ((byte)TransporterType.File);
-						writer.Write (hash);
-						writer.Write ((byte)FlagDef.Start);
-						writer.Write (fileName);
-						writer.Write ((int)fileStream.Length);
-						writer.Write ((ushort)dataSize);
-						writer.WriteBytes (dataPtr, dataSize);
-						NetworkManager.Brodcast (writer, QosType.Reliable, true);
+			unsafe
+			{
+				fixed (byte* dataPtr = transporter.buffer)
+				{
+					using (var writer = new DataStreamWriter(dataSize + 15 + nameByteCount, Allocator.Temp))
+					{
+						writer.Write((byte)BuiltInPacket.Type.DataTransporter);
+						writer.Write((byte)TransporterType.File);
+						writer.Write(transporter.hash);
+						writer.Write((byte)FlagDef.Start);
+						writer.Write(fileName);
+						writer.Write((int)fileStream.Length);
+						writer.Write((ushort)dataSize);
+						writer.WriteBytes(dataPtr, dataSize);
+						NetworkManager.Brodcast(writer, QosType.Reliable, true);
 					}
 				}
 			}
 			transporter.pos += dataSize;
-			sendTransporterTable[hash] = transporter;
+			_sendTransporterTable[transporter.hash] = transporter;
 		}
 
-		public void Broadcast (string fileName, FileStream fileStream) {
-			Send (ushort.MaxValue, fileName, fileStream);
+		public int Broadcast (string fileName, FileStream fileStream) {
+			return Send (ushort.MaxValue, fileName, fileStream);
 		}
 
 		List<int> removeTransporterList = new List<int> ();
 
 		protected override async void SendFragmentData () {
-			if (sendTransporterTable == null) return;
+			if (_sendTransporterTable == null) return;
 
-			foreach (var t in sendTransporterTable.Values) {
+			foreach (var t in _sendTransporterTable.Values) {
 				if(t.isAwait) {
 					return;
 				}
 			}
 
 			foreach (int hash in removeTransporterList) {
-				sendTransporterTable.Remove (hash);
+				_sendTransporterTable.Remove (hash);
 			}
 			removeTransporterList.Clear ();
 
-			foreach (var pair in sendTransporterTable) {
+			foreach (var pair in _sendTransporterTable) {
 				var transporter = pair.Value;
 				if (transporter.isAwait) continue;
 
