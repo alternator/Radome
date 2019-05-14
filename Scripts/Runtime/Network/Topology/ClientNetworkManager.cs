@@ -55,7 +55,8 @@ namespace ICKX.Radome {
 
 		public Driver driver;
 		public NetworkLinker<Driver> networkLinker;
-		public List<PlayerInfo> activePlayerInfoList = new List<PlayerInfo> (16);
+        public List<ConnectionInfo> activeConnectionInfoList = new List<ConnectionInfo>(16);
+        public List<PlayerInfo> activePlayerInfoList = new List<PlayerInfo> (16);
 
 		public PlayerInfo MyPlayerInfo { get; protected set; }
 

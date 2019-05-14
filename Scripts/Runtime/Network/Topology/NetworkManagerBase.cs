@@ -71,8 +71,6 @@ namespace ICKX.Radome {
 
         protected List<byte> activePlayerIdList = new List<byte> (16);
 
-		public List<ConnectionInfo> activeConnectionInfoList = new List<ConnectionInfo> (16);
-
 		protected JobHandle jobHandle;
 
 		//public event System.Action OnConnectionFailed = null;
