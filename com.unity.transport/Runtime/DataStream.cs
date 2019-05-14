@@ -785,14 +785,14 @@ namespace Unity.Networking.Transport
 
         public long ReadLong(ref Context ctx)
         {
-            int data;
+            long data;
             ReadBytes(ref ctx, (byte*) &data, sizeof(long));
             return data;
         }
 
         public ulong ReadULong (ref Context ctx)
         {
-            uint data;
+            ulong data;
             ReadBytes(ref ctx, (byte*) &data, sizeof(ulong));
             return data;
         }
