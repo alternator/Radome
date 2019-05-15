@@ -29,39 +29,39 @@ namespace ICKX.Radome {
 		}
 	}
 
-	public abstract class NetworkManagerBase : System.IDisposable {
+    public abstract class NetworkManagerBase : System.IDisposable {
 
-		[System.Serializable]
-		public struct ConnectionInfo {
-			public byte _isCreated;
-			public State state;
-			public float disconnectTime;
+        [System.Serializable]
+        public struct ConnectionInfo {
+            public byte _isCreated;
+            public State state;
+            public float disconnectTime;
 
-			public ConnectionInfo(State state) {
-				this._isCreated = 1;
-				this.state = state;
-				this.disconnectTime = 0.0f;
-			}
+            public ConnectionInfo(State state) {
+                this._isCreated = 1;
+                this.state = state;
+                this.disconnectTime = 0.0f;
+            }
 
-			public bool isCreated { get { return _isCreated != 0; } }
-		}
+            public bool isCreated { get { return _isCreated != 0; } }
+        }
 
-		public enum State : byte {
+        public enum State : byte {
             Offline = 0,
             Connecting,
             Online,
             Disconnecting,
         }
 
-        public delegate void OnReconnectPlayerEvent (ushort id);
-        public delegate void OnDisconnectPlayerEvent (ushort id);
-        public delegate void OnRegisterPlayerEvent (ushort id);
-        public delegate void OnUnregisterPlayerEvent (ushort id);
-        public delegate void OnRecievePacketEvent (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx);
+        public delegate void OnReconnectPlayerEvent(ushort id);
+        public delegate void OnDisconnectPlayerEvent(ushort id);
+        public delegate void OnRegisterPlayerEvent(ushort id);
+        public delegate void OnUnregisterPlayerEvent(ushort id);
+        public delegate void OnRecievePacketEvent(ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx);
 
-		public const ushort ServerPlayerId = 0;
+        public const ushort ServerPlayerId = 0;
 
-		public State state { get; protected set; } = State.Offline;
+        public State state { get; protected set; } = State.Offline;
 
         public ushort playerId { get; protected set; }
         public bool isLeader { get { return playerId == 0; } }
@@ -69,22 +69,24 @@ namespace ICKX.Radome {
 
         public long leaderStatTime { get; protected set; }
 
-        protected List<byte> activePlayerIdList = new List<byte> (16);
+        protected List<byte> activePlayerIdList = new List<byte>(16);
 
-		protected JobHandle jobHandle;
+        protected JobHandle jobHandle;
 
-		//public event System.Action OnConnectionFailed = null;
-		public event OnReconnectPlayerEvent OnReconnectPlayer = null;
-		public event OnDisconnectPlayerEvent OnDisconnectPlayer = null;
-		public event OnRegisterPlayerEvent OnRegisterPlayer = null;
-		public event OnUnregisterPlayerEvent OnUnregisterPlayer = null;
+        //public event System.Action OnConnectionFailed = null;
+        public event OnReconnectPlayerEvent OnReconnectPlayer = null;
+        public event OnDisconnectPlayerEvent OnDisconnectPlayer = null;
+        public event OnRegisterPlayerEvent OnRegisterPlayer = null;
+        public event OnUnregisterPlayerEvent OnUnregisterPlayer = null;
         public event OnRecievePacketEvent OnRecievePacket = null;
 
-        public NetworkManagerBase () {
-		}
-
-        public virtual void Dispose () {
+        public NetworkManagerBase() {
         }
+
+        public virtual void Dispose() {
+        }
+
+        public abstract IReadOnlyList<DefaultPlayerInfo> PlayerInfoList { get; }
 
         public ushort GetPlayerCount () {
             ushort count = 0;

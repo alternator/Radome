@@ -94,8 +94,12 @@ namespace ICKX.Radome {
 		}
 
 		public static ushort GetPlayerCount () {
-			return NetworkManager.GetPlayerCount () ;
+			return (NetworkManager == null) ? (ushort)0 : NetworkManager.GetPlayerCount () ;
 		}
+
+        public static IReadOnlyList<DefaultPlayerInfo> PlayerInfoList {
+            get { return NetworkManager != null ? NetworkManager.PlayerInfoList : null ; }
+        }
 
 		public bool IsActivePlayerId (ushort playerId) {
 			return NetworkManager.IsActivePlayerId (playerId);

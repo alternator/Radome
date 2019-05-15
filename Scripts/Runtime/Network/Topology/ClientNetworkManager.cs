@@ -59,8 +59,9 @@ namespace ICKX.Radome {
         public List<PlayerInfo> activePlayerInfoList = new List<PlayerInfo> (16);
 
 		public PlayerInfo MyPlayerInfo { get; protected set; }
+        public override IReadOnlyList<DefaultPlayerInfo> PlayerInfoList { get { return activePlayerInfoList; } }
 
-		public ClientNetworkManager (PlayerInfo playerInfo) : base () {
+        public ClientNetworkManager (PlayerInfo playerInfo) : base () {
 			MyPlayerInfo = playerInfo;
 		}
 

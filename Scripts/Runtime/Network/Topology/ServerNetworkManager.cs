@@ -87,8 +87,9 @@ namespace ICKX.Radome {
 		private DataStreamWriter relayWriter;
 
 		public PlayerInfo MyPlayerInfo { get; protected set; }
+        public override IReadOnlyList<DefaultPlayerInfo> PlayerInfoList { get { return activePlayerInfoList; } }
 
-		public ServerNetworkManager (PlayerInfo playerInfo) : base () {
+        public ServerNetworkManager (PlayerInfo playerInfo) : base () {
 			MyPlayerInfo = playerInfo;
 			relayWriter = new DataStreamWriter (NetworkParameterConstants.MTU, Allocator.Persistent);
 		}
