@@ -83,7 +83,7 @@ namespace ICKX.Radome {
 			}
         }
 
-		private void OnConnect (ushort playerId) {
+		private void OnConnect (ushort playerId, ulong uniqueId) {
 			if(playerId == GamePacketManager.PlayerId) {
 				//プレイヤーIDが割り振られたときにAuthorチェック
 				RecordableIdentityManager.RequestSyncAuthor (this);

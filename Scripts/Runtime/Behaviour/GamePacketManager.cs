@@ -56,7 +56,7 @@ namespace ICKX.Radome {
 				if (NetworkManager == null) {
 					return true;
 				} else {
-					return NetworkManager.isLeader;
+					return NetworkManager.IsLeader;
 				}
 			}
 		}
@@ -66,7 +66,7 @@ namespace ICKX.Radome {
 				if(NetworkManager == null) {
 					return 0;
 				}else {
-					return NetworkManager.playerId;
+					return NetworkManager.MyPlayerId;
 				}
 			}
 		}
@@ -78,7 +78,7 @@ namespace ICKX.Radome {
 				if (NetworkManager == null) {
 					return localStartTime;
 				} else {
-					return NetworkManager.leaderStatTime;
+					return NetworkManager.LeaderStatTime;
 				}
 			}
 		}
@@ -105,8 +105,9 @@ namespace ICKX.Radome {
 			return NetworkManager.IsActivePlayerId (playerId);
 		}
 
-		public static void SetNetworkManager (NetworkManagerBase networkManager) {
-			RemoveNetworkManager ();
+		public static void SetNetworkManager (NetworkManagerBase networkManager)
+        {
+            RemoveNetworkManager ();
 			NetworkManager = networkManager;
 
 			NetworkManager.OnReconnectPlayer += ExecOnReconnectPlayer;
@@ -116,8 +117,9 @@ namespace ICKX.Radome {
 			NetworkManager.OnRecievePacket += ExecOnRecievePacket;
 		}
 
-		public static void RemoveNetworkManager () {
-			if (NetworkManager != null) {
+		public static void RemoveNetworkManager ()
+        {
+            if (NetworkManager != null) {
 				NetworkManager.OnReconnectPlayer -= ExecOnReconnectPlayer;
 				NetworkManager.OnDisconnectPlayer -= ExecOnDisconnectPlayer;
 				NetworkManager.OnRegisterPlayer -= ExecOnRegisterPlayer;
@@ -127,31 +129,31 @@ namespace ICKX.Radome {
 			}
 		}
 
-		private static void ExecOnReconnectPlayer (ushort id) { OnReconnectPlayer?.Invoke (id); }
+		private static void ExecOnReconnectPlayer (ushort playerId, ulong uniqueId) { OnReconnectPlayer?.Invoke (playerId, uniqueId); }
 
-		private static void ExecOnDisconnectPlayer (ushort id) { OnDisconnectPlayer?.Invoke (id); }
+		private static void ExecOnDisconnectPlayer (ushort playerId, ulong uniqueId) { OnDisconnectPlayer?.Invoke (playerId, uniqueId); }
 
-		private static void ExecOnRegisterPlayer (ushort id) { OnRegisterPlayer?.Invoke (id); }
+		private static void ExecOnRegisterPlayer (ushort playerId, ulong uniqueId) { OnRegisterPlayer?.Invoke (playerId, uniqueId); }
 
-		private static void ExecOnUnregisterPlayer (ushort id) { OnUnregisterPlayer?.Invoke (id); }
+		private static void ExecOnUnregisterPlayer (ushort playerId, ulong uniqueId) { OnUnregisterPlayer?.Invoke (playerId, uniqueId); }
 
-		private static void ExecOnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
-			OnRecievePacket?.Invoke (senderPlayerId, type, stream, ctx);
+		private static void ExecOnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
+			OnRecievePacket?.Invoke (senderPlayerId, senderUniqueId, type, stream, ctx);
 		}
 
 		public static void Send (ushort playerId, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
+			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Send (playerId, data, qos);
 		}
 
 		public static void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
+			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Multicast (playerIdList, data, qos);
 		}
 
 		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
-			if (NetworkManager == null || NetworkManager.state == State.Offline) return;
-			NetworkManager.Brodcast (data, qos, noChunk);
+			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			NetworkManager.Broadcast (data, qos, noChunk);
 		}
 
 	}

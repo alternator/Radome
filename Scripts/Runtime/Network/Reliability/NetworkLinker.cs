@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿/*
+using System.Net;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
@@ -738,3 +739,4 @@ namespace ICKX.Radome {
 		}
 	}
 }
+*/

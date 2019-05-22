@@ -6,609 +6,967 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
 using Unity.Networking.Transport.LowLevel.Unsafe;
+using Unity.Networking.Transport.Utilities;
 using UnityEngine;
 using UnityEngine.Profiling;
-using UdpCNetworkDriver = Unity.Networking.Transport.BasicNetworkDriver<Unity.Networking.Transport.IPv4UDPSocket>;
-
-namespace ICKX.Radome {
-
-	public class UDPServerNetworkManager<PlayerInfo> : ServerNetworkManager<UdpCNetworkDriver, PlayerInfo> where PlayerInfo : DefaultPlayerInfo, new() {
-
-		public UDPServerNetworkManager (PlayerInfo playerInfo) : base (playerInfo) {
-		}
-
-		/// <summary>
-		/// サーバー起動
-		/// </summary>
-		public void Start (int port) {
-			var config = new NetworkConfigParameter () {
-				connectTimeoutMS = 1000 * 5,
-				disconnectTimeoutMS = 1000 * 5,
-			};
-			Start (port, config);
-		}
-
-		public void Start (int port, NetworkConfigParameter config) {
-			if (state != State.Offline) {
-				Debug.LogError ("Start Failed  currentState = " + state);
-				return;
-			}
-
-			if (!driver.IsCreated) {
-				driver = new UdpCNetworkDriver (new INetworkParameter[] { config });
-			}
-
-			var endPoint = new IPEndPoint (IPAddress.Any, port);
-			if (driver.Bind (endPoint) != 0) {
-				Debug.Log ("Failed to bind to port 9000");
-			} else {
-				driver.Listen ();
-			}
-
-			Start ();
-		}
-
-		protected override bool IsReconnect (NetworkConnection connection, out ushort disconnectedPlayerId) {
-			var remoteEndPoint = driver.RemoteEndPoint (connection);
-			disconnectedPlayerId = ContainEndPointPlayerInfoList (remoteEndPoint);
-			return disconnectedPlayerId != 0;
-		}
-
-		/// <summary>
-		/// 今までに接続してきたplayerのEndPointがあればPlayerIDを返す
-		/// </summary>
-		public ushort ContainEndPointPlayerInfoList (NetworkEndPoint endPoint) {
-			for (ushort i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					var linker = networkLinkers[i];
-					var remoteEndPoint = driver.RemoteEndPoint (linker.connection);
-
-					if (endPoint.GetIp () == remoteEndPoint.GetIp () && endPoint.Port == remoteEndPoint.Port) {
-						return i;
-					}
-				}
-			}
-			return 0;
-		}
-	}
-
-	public abstract class ServerNetworkManager<Driver, PlayerInfo> : NetworkManagerBase
-			where Driver : struct, INetworkDriver where PlayerInfo : DefaultPlayerInfo, new() {
-
-		public float registrationTimeOut { get; set; } = 60.0f;
-
-		public override bool isFullMesh => false;
-
-		public Driver driver;
-		public List<NetworkLinker<Driver>> networkLinkers;
-        public List<ConnectionInfo> activeConnectionInfoList = new List<ConnectionInfo>(16);
-        public List<PlayerInfo> activePlayerInfoList = new List<PlayerInfo> (16);
-
-		private DataStreamWriter relayWriter;
-
-		public PlayerInfo MyPlayerInfo { get; protected set; }
-        public override IReadOnlyList<DefaultPlayerInfo> PlayerInfoList { get { return activePlayerInfoList; } }
-
-        public ServerNetworkManager (PlayerInfo playerInfo) : base () {
-			MyPlayerInfo = playerInfo;
-			relayWriter = new DataStreamWriter (NetworkParameterConstants.MTU, Allocator.Persistent);
-		}
-
-		public override void Dispose () {
-			if (state != State.Offline) {
-				StopComplete ();
-			}
-			if (driver.IsCreated) {
-				driver.Dispose ();
-			}
-			relayWriter.Dispose ();
-			base.Dispose ();
-		}
-
-		protected void Start () {
-			leaderStatTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds ();
-			state = State.Connecting;
-
-			networkLinkers = new List<NetworkLinker<Driver>> (16);
-			RegisterPlayerId (0, default);
-		}
-
-		/// <summary>
-		/// サーバー停止
-		/// </summary>
-		public override void Stop () {
-			if (state == State.Offline) {
-				Debug.LogError ("Start Failed  currentState = " + state);
-				return;
-			}
-			if (!jobHandle.IsCompleted) {
-				Debug.LogError ("NetworkJob実行中に停止できない");
-				return;
-			}
-
-			state = State.Disconnecting;
-
-			//すべてのPlayerに停止を伝えてからサーバーも停止
-			if (GetPlayerCount () == 1) {
-				StopComplete ();
-			} else {
-				BroadcastStopNetworkPacket ();
-				Debug.Log ("Stop");
-			}
-		}
-
-		// すべてのClientが切断したら呼ぶ
-		protected override void StopComplete () {
-			if (state == State.Offline) {
-				Debug.LogError ("CompleteStop Failed  currentState = " + state);
-				return;
-			}
-
-			state = State.Offline;
-			jobHandle.Complete ();
-
-			driver.Dispose ();
-
-			if (networkLinkers != null && networkLinkers.Count > 0) {
-				for (int i = 0; i < networkLinkers.Count; i++) {
-					if (networkLinkers[i] != null) {
-						networkLinkers[i].Dispose ();
-						networkLinkers[i] = null;
-					}
-				}
-			}
-			Debug.Log ("StopComplete");
-		}
-
-		//新しいPlayerを登録する処理
-		protected virtual void RegisterPlayerId (ushort id, NetworkConnection connection) {
-			base.RegisterPlayerId (id);
-
-			//ConnectionInfo更新
-			var connectionInfo = new ConnectionInfo (State.Online);
-
-			while (id >= activeConnectionInfoList.Count) {
-				activeConnectionInfoList.Add (default);
-			}
-			activeConnectionInfoList[id] = connectionInfo;
-
-			//playerInfo領域確保
-			while (id >= activePlayerInfoList.Count) {
-				activePlayerInfoList.Add (null);
-			}
-
-			if (id == 0) {
-				networkLinkers.Add (null);
-				//自分のユーザー情報をリストに登録
-				activePlayerInfoList[0] = MyPlayerInfo;
-			} else {
-				if (id == networkLinkers.Count) {
-					networkLinkers.Add (new NetworkLinker<Driver> (driver, connection, NetworkParameterConstants.MTU));
-				} else {
-					networkLinkers[id] = new NetworkLinker<Driver> (driver, connection, NetworkParameterConstants.MTU);
-				}
-
-				//playerIDを通知するパケットを送信.
-				SendRegisterPlayerPacket (id);
-
-				//他の接続済みplayerに通知
-				BroadcastNotifyAddPlayerPacket (id);
-
-				//新しく接続してきたプレイヤーにユーザー情報を通知
-				for (ushort i = 0; i < activePlayerInfoList.Count; i++) {
-					if (activePlayerInfoList[i] == null) continue;
-					using (var updatePlayerPacket = activePlayerInfoList[i].CreateUpdatePlayerInfoPacket (i)) {
-						Send (id, updatePlayerPacket, QosType.Reliable);
-					}
-				}
-			}
-
-			//完了イベント
-			ExecOnRegisterPlayer (id);
-		}
-
-		//Playerを登録解除する処理
-		protected override void UnregisterPlayerId (ushort id) {
-			base.UnregisterPlayerId (id);
-
-			if (id < activeConnectionInfoList.Count) {
-				driver.Disconnect (networkLinkers[id].connection);
-				networkLinkers[id].Dispose ();
-				networkLinkers[id] = null;
-				activeConnectionInfoList[id] = default;
-				activePlayerInfoList[id] = null;
-			}
-
-			if (state == State.Disconnecting) {
-				//すべて切断したらサーバー完全停止.
-				if (GetPlayerCount () == 1) {
-					StopComplete ();
-				}
-			} else {
-				//接続済みplayerに通知
-				BroadcastNotifyRemovePlayerPacket (id);
-			}
-			ExecOnUnregisterPlayer (id);
-		}
-
-		//Playerを再接続させる処理
-		protected virtual void ReconnectPlayerId (ushort id, NetworkConnection connection) {
-
-			if (id < activeConnectionInfoList.Count) {
-				var info = activeConnectionInfoList[id];
-				if (info.isCreated) {
-					info.state = State.Online;
-					activeConnectionInfoList[id] = info;
-
-					networkLinkers[id].Reconnect (connection);
-
-					//playerIDを通知するパケットを送信.
-					SendRegisterPlayerPacket (id);
-					//他の接続済みplayerに通知
-					BroadcastNotifyReconnectPlayerPacket (id);
-
-					ExecOnReconnectPlayer (id);
-				} else {
-					Debug.LogError ($"ReconnectPlayerId Error. ID={id}は未登録");
-				}
-			} else {
-				Debug.LogError ($"ReconnectPlayerId Error. ID={id}は未登録");
-			}
-		}
-
-		//Playerを一旦切断状態にする処理
-		protected virtual void DisconnectPlayerId (ushort id) {
-
-			if (id < activeConnectionInfoList.Count) {
-				var info = activeConnectionInfoList[id];
-				if (info.isCreated) {
-					info.state = State.Connecting;
-					info.disconnectTime = Time.realtimeSinceStartup;
-					activeConnectionInfoList[id] = info;
-
-					//他の接続済みplayerに通知
-					BroadcastNotifyDisconnectPlayerPacket (id);
-
-					ExecOnDisconnectPlayer (id);
-				} else {
-					Debug.LogError ($"DisconnectPlayerId Error. ID={id}は未登録");
-				}
-			} else {
-				Debug.LogError ($"DisconnectPlayerId Error. ID={id}は未登録");
-			}
-		}
-
-		/// <summary>
-		/// Player1人にパケットを送信 (chunk化されないので注意)
-		/// </summary>
-		public override ushort Send (ushort targetPlayerId, DataStreamWriter data, QosType qos) {
-			if (state == State.Offline) {
-				Debug.LogError ("Send Failed : State." + state);
-				return 0;
-			}
-			ushort seqNum = 0;
-			if (targetPlayerId < networkLinkers.Count && networkLinkers[targetPlayerId] != null) {
-				seqNum = networkLinkers[targetPlayerId].Send (data, qos, targetPlayerId, playerId, false);
-			} else {
-				Debug.LogError ("Send Failed : is not create networkLinker ID = " + targetPlayerId);
-			}
-			return seqNum;
-		}
-
-		/// <summary>
-		/// PlayerListの複数人にパケットを送信(chunk化されないので注意)
-		/// </summary>
-		public override void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
-			if (state == State.Offline) {
-				Debug.LogError ("Send Failed : State." + state);
-				return;
-			}
-			for (int i = 1; i < playerIdList.Length; i++) {
-				if (networkLinkers[playerIdList[i]] != null) {
-					networkLinkers[playerIdList[i]].Send (data, qos, playerIdList[i], playerId, false);
-				}
-			}
-		}
-
-		/// <summary>
-		/// 全Playerにパケットを送信
-		/// </summary>
-		public override void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
-			if (state == State.Offline) {
-				Debug.LogError ("Send Failed : State." + state);
-				return;
-			}
-			for (int i = 1; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					networkLinkers[i].Send (data, qos, NetworkLinkerConstants.BroadcastId, playerId, noChunk);
-				}
-			}
-		}
-
-		private void SendRegisterPlayerPacket (ushort id) {
-			var linker = networkLinkers[id];
-
-			using (var registerPacket = new DataStreamWriter (14 + activePlayerIdList.Count, Allocator.Temp)) {
-				registerPacket.Write ((byte)BuiltInPacket.Type.RegisterPlayer);
-				registerPacket.Write (id);
-				registerPacket.Write (leaderStatTime);
-				registerPacket.Write (linker.OtherSeqNumber);
-				registerPacket.Write ((byte)activePlayerIdList.Count);
-				for (int i = 0; i < activePlayerIdList.Count; i++) {
-					registerPacket.Write (activePlayerIdList[i]);
-				}
-				Send (id, registerPacket, QosType.Reliable);
-			}
-		}
-
-		private void BroadcastNotifyAddPlayerPacket (ushort id) {
-			using (var addPlayerPacket = new DataStreamWriter (3, Allocator.Temp)) {
-				addPlayerPacket.Write ((byte)BuiltInPacket.Type.NotifyRegisterPlayer);
-				addPlayerPacket.Write (id);
-				Brodcast (addPlayerPacket, QosType.Reliable);
-			}
-		}
-
-		private void BroadcastNotifyRemovePlayerPacket (ushort id) {
-			using (var removePlayerPacket = new DataStreamWriter (3, Allocator.Temp)) {
-				removePlayerPacket.Write ((byte)BuiltInPacket.Type.NotifyUnegisterPlayer);
-				removePlayerPacket.Write (id);
-				Brodcast (removePlayerPacket, QosType.Reliable);
-			}
-		}
-
-		private void BroadcastStopNetworkPacket () {
-			using (var stopNetworkPacket = new DataStreamWriter (2, Allocator.Temp)) {
-				stopNetworkPacket.Write ((byte)BuiltInPacket.Type.StopNetwork);
-				stopNetworkPacket.Write ((byte)0);    //TODO error code
-
-				Brodcast (stopNetworkPacket, QosType.Reliable);
-			}
-		}
-		private void BroadcastNotifyReconnectPlayerPacket (ushort id) {
-			using (var removePlayerPacket = new DataStreamWriter (3, Allocator.Temp)) {
-				removePlayerPacket.Write ((byte)BuiltInPacket.Type.NotifyReconnectPlayer);
-				removePlayerPacket.Write (id);
-				Brodcast (removePlayerPacket, QosType.Reliable);
-			}
-		}
-
-		private void BroadcastNotifyDisconnectPlayerPacket (ushort id) {
-			using (var removePlayerPacket = new DataStreamWriter (3, Allocator.Temp)) {
-				removePlayerPacket.Write ((byte)BuiltInPacket.Type.NotifyDisconnectPlayer);
-				removePlayerPacket.Write (id);
-				Brodcast (removePlayerPacket, QosType.Reliable);
-			}
-		}
-
-		private bool isFirstUpdateComplete = false;
-
-		protected abstract bool IsReconnect (NetworkConnection connection, out ushort disconnectedPlayerId);
-
-		/// <summary>
-		/// 受信パケットの受け取りなど、最初に行うべきUpdateループ
-		/// </summary>
-		public override void OnFirstUpdate () {
-			if (state == State.Offline) {
-				return;
-			}
-
-			//job完了待ち
-			jobHandle.Complete ();
-			for (int i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					networkLinkers[i].Complete ();
-				}
-			}
-
-			//接続確認
-			NetworkConnection connection;
-			while ((connection = driver.Accept ()) != default) {
-				state = State.Online;
-				if (IsReconnect (connection, out ushort disconnectedPlayerId)) {
-					//再接続として扱う
-					if (activeConnectionInfoList[disconnectedPlayerId].state == State.Connecting) {
-						ReconnectPlayerId (disconnectedPlayerId, connection);
-						Debug.Log ("Accepted a reconnection  playerId=" + disconnectedPlayerId);
-					}
-				} else {
-					//接続してきたクライアントとLinkerで接続
-					ushort newPlayerId = GetDeactivePlayerId ();
-					RegisterPlayerId (newPlayerId, connection);
-					Debug.Log ("Accepted a connection  newPlayerId=" + newPlayerId);
-				}
-			}
-
-			//一定時間切断したままのplayerの登録を解除
-			for (ushort i = 0; i < activeConnectionInfoList.Count; i++) {
-				var info = activeConnectionInfoList[i];
-				if (info.isCreated) {
-					if (info.state == State.Connecting) {
-						if (Time.realtimeSinceStartup - info.disconnectTime > registrationTimeOut) {
-							UnregisterPlayerId (i);
-						}
-					}
-				}
-			}
-
-			//受け取ったパケットを処理に投げる.
-			for (ushort i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] == null) continue;
-
-				var linker = networkLinkers[i];
-
-				if (linker.IsDisconnected) {
-					//Debug.Log ("IsDisconnected");
-					//切断したClientを一時停止状態に.
-					DisconnectPlayerId (i);
-					continue;
-				}
-
-				bool finish = false;
-
-				//受け取ったパケットを解析
-				for (int j = 0; j < linker.dataStreams.Length; j++) {
-					var stream = linker.dataStreams[j];
-					var ctx = default (DataStreamReader.Context);
-					if (!ReadQosHeader (stream, ref ctx, out var qosType, out var seqNum, out var ackNum, out ushort targetPlayerId, out ushort senderPlayerId)) {
-						continue;
-					}
-
-					//Debug.Log ($"{j}, {qosType}, {seqNum}, {ackNum}, {stream.Length}");
-					if (targetPlayerId == NetworkLinkerConstants.MulticastId) {
-						//Multi Targetの場合
-						ushort len = stream.ReadUShort (ref ctx);
-						var ctxMulticast = ctx;
-						ctxMulticast.Add(2 * len);
-						var chunk = stream.ReadChunk (ref ctxMulticast, stream.Length - NetworkLinkerConstants.HeaderSize + 2 * len);
-						for (int k = 0; k < len; k++) {
-							var multiTatgetId = stream.ReadUShort (ref ctx);
-							if (multiTatgetId == 0) {
-								//targetPlayerId = 0;
-							} else {
-								RelayPacket (qosType, multiTatgetId, senderPlayerId, chunk);
-							}
-						}
-					} else if ((targetPlayerId != ServerPlayerId)) {
-						//パケットをリレーする
-						var ctxBroadcast = ctx;
-						RelayPacket (qosType, targetPlayerId, senderPlayerId
-							, stream.ReadChunk(ref ctxBroadcast, stream.Length - NetworkLinkerConstants.HeaderSize));
-					}
-
-					//chunkをバラして解析
-					while (!finish) {
-						if (!ReadChunkHeader (stream, ref ctx, out var chunk, out var ctx2)) {
-							break;
-						}
-						byte type = chunk.ReadByte (ref ctx2);
-						//Debug.Log ("Linker streamLen=" + stream.Length + ", chunkLen=" + chunk.Length + ", type=" + type + ",target=" + targetPlayerId + ",sender=" + senderPlayerId);
-
-						if ((targetPlayerId == playerId || targetPlayerId == NetworkLinkerConstants.BroadcastId)) {
-							//自分宛パケットの解析
-							finish = DeserializePacket (senderPlayerId, type, ref chunk, ref ctx2);
-						}
-					}
-					if (finish) {
-						if (state == State.Offline) {
-							//server停止ならUpdate完全終了
-							return;
-						} else {
-							//1 clientが停止ならパケット解析だけ終了
-							break;
-						}
-					}
-				}
-			}
-			isFirstUpdateComplete = true;
-		}
-
-		private void RelayPacket (QosType qosType, ushort targetPlayerId, ushort senderPlayerId, DataStreamReader stream) {
-
-			relayWriter.Clear ();
-			unsafe {
-				byte* chunkPtr = stream.GetUnsafeReadOnlyPtr ();
-				relayWriter.Write ((byte)BuiltInPacket.Type.RelayChunkedPacket);
-				relayWriter.WriteBytes (chunkPtr, (ushort)stream.Length);
-			}
-			if (targetPlayerId == NetworkLinkerConstants.BroadcastId) {
-				for (ushort k = 1; k < networkLinkers.Count; k++) {
-					if (senderPlayerId == k) continue;
-					var relayLinker = networkLinkers[k];
-					if (relayLinker == null) continue;
-					//BroadCastならchunk済みなので再度chunk化しない
-					relayLinker.Send (relayWriter, qosType, NetworkLinkerConstants.BroadcastId, senderPlayerId, true);
-				}
-			} else {
-				if (targetPlayerId <= networkLinkers.Count) {
-					var relayLinker = networkLinkers[targetPlayerId];
-					if (relayLinker != null) {
-						relayLinker.Send (relayWriter, qosType, NetworkLinkerConstants.BroadcastId, senderPlayerId, true);
-					}
-				}
-			}
-		}
-
-		protected virtual bool DeserializePacket (ushort senderPlayerId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2) {
-			switch (type) {
-				case (byte)BuiltInPacket.Type.UpdatePlayerInfo:
-					DeserializeUpdatePlayerInfoPacket (senderPlayerId, ref chunk, ref ctx2);
-					break;
-				case (byte)BuiltInPacket.Type.UnregisterPlayer:
-					//登録解除リクエスト
-					ushort unregisterPlayerId = chunk.ReadUShort (ref ctx2);
-					UnregisterPlayerId (unregisterPlayerId);
-					return true;
-				default:
-					//自分宛パケットの解析
-					RecieveData (senderPlayerId, type, chunk, ctx2);
-					break;
-			}
-			return false;
-		}
-
-		protected virtual void DeserializeUpdatePlayerInfoPacket (ushort senderPlayerId, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2) {
-			var id = chunk.ReadUShort (ref ctx2);
-
-			if (id == playerId) return;
-
-			if (activePlayerInfoList[id] == null) {
-				activePlayerInfoList[id] = new PlayerInfo ();
-			}
-			var clientPlayerInfo = activePlayerInfoList[id];
-			//クライアントのPlayerInfo更新
-			clientPlayerInfo.Deserialize (ref chunk, ref ctx2);
-
-			//接続してきたクライアントのPlayer情報に問題なければ、全クライアントに共有
-			using (var updatePlayerPacket = clientPlayerInfo.CreateUpdatePlayerInfoPacket (id)) {
-				Brodcast (updatePlayerPacket, QosType.Reliable);
-			}
-		}
-
-		/// <summary>
-		/// まとめたパケット送信など、最後に行うべきUpdateループ
-		/// </summary>
-		public override void OnLastUpdate () {
-			if (state == State.Offline) {
-				return;
-			}
-
-			if (!isFirstUpdateComplete) return;
-
-			//main thread処理
-			for (int i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					if (state == State.Online || state == State.Disconnecting) {
-						networkLinkers[i].SendMeasureLatencyPacket ();
-					}
-				}
-			}
-
-			//Unreliableなパケットの送信
-			var linkerJobs = new NativeArray<JobHandle> (networkLinkers.Count, Allocator.Temp);
-			for (int i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					linkerJobs[i] = networkLinkers[i].ScheduleSendChunks (default (JobHandle));
-				}
-			}
-			jobHandle = JobHandle.CombineDependencies (linkerJobs);
-			//JobHandle.ScheduleBatchedJobs ();
-
-			//driverの更新
-			jobHandle = driver.ScheduleUpdate (jobHandle);
-
-			//TODO iJobで実行するとNetworkDriverの処理が並列にできない
-			//     できればIJobParallelForでScheduleRecieveを並列化したい
-			for (int i = 0; i < networkLinkers.Count; i++) {
-				if (networkLinkers[i] != null) {
-					//JobスレッドでLinkerのパケット処理開始
-					jobHandle = networkLinkers[i].ScheduleRecieve (jobHandle);
-				}
-			}
-			linkerJobs.Dispose ();
-			isFirstUpdateComplete = false;
-
-			JobHandle.ScheduleBatchedJobs ();
-		}
-	}
+
+namespace ICKX.Radome
+{
+
+    public class UDPServerNetworkManager<PlayerInfo> : ServerNetworkManager<UdpNetworkDriver, PlayerInfo> where PlayerInfo : DefaultPlayerInfo, new()
+    {
+        private NetworkConfigParameter Config;
+
+        public UDPServerNetworkManager(PlayerInfo playerInfo) : base (playerInfo)
+        {
+            Config = new NetworkConfigParameter()
+            {
+                connectTimeoutMS = 1000 * 5,
+                disconnectTimeoutMS = 1000 * 5,
+            };
+        }
+
+        public UDPServerNetworkManager(PlayerInfo playerInfo, NetworkConfigParameter config) : base(playerInfo)
+        {
+            Config = config;
+        }
+
+        /// <summary>
+        /// サーバー起動
+        /// </summary>
+        public void Start(int port)
+        {
+            if (NetwrokState != NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                return;
+            }
+
+            if (!NetworkDriver.IsCreated)
+            {
+                NetworkDriver = new UdpNetworkDriver(new INetworkParameter[] {
+                    Config,
+                    new ReliableUtility.Parameters { WindowSize = 32 },
+                    //new SimulatorUtility.Parameters {MaxPacketSize = 256, MaxPacketCount = 32, PacketDelayMs = 100},
+                });
+            }
+
+            _QosPipelines[(int)QosType.Empty] = NetworkDriver.CreatePipeline();
+            //_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline();
+            //_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
+            _QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage), typeof(SimulatorPipelineStage));
+            _QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
+
+            var endPoint = NetworkEndPoint.AnyIpv4;
+            endPoint.Port = (ushort)port;
+            if (NetworkDriver.Bind(endPoint) != 0)
+            {
+                Debug.Log("Failed to bind to port");
+            }
+            else
+            {
+                NetworkDriver.Listen();
+                Debug.Log("Listen");
+            }
+
+            Start();
+        }
+    }
+
+    /// <summary>
+    /// サーバー用のNetworkManager
+    /// 通信の手順は
+    /// 
+    /// Server.Send  -> Chunk化 -> Pipline -> con.Send -> Pop -> Pipline -> Chunk解除 -> Recieve
+    /// </summary>
+    /// <typeparam name="Driver"></typeparam>
+    /// <typeparam name="PlayerInfo"></typeparam>
+	public abstract class ServerNetworkManager<Driver, PlayerInfo> : SCNetowrkManagerBase<Driver, PlayerInfo>
+            where Driver : struct, INetworkDriver where PlayerInfo : DefaultPlayerInfo, new()
+    {
+
+        public float registrationTimeOut { get; set; } = 60.0f;
+
+        public override bool IsFullMesh => false;
+        protected Dictionary<int, ushort> _ConnIdPlayerIdTable = new Dictionary<int, ushort>();
+        public IReadOnlyDictionary<int, ushort> ConnIdPlayerIdTable => _ConnIdPlayerIdTable;
+        
+        protected NativeList<NetworkConnection> _Connections;
+
+        protected NativeList<int> _ConnectConnIdList;
+        protected NativeList<int> _DisconnectConnIdList;
+        protected DataStreamWriter _RelayWriter;
+        //protected NativeMultiHashMap<int, DataStreamReader> _RecieveDataStream;
+        protected NativeList<DataPacket> _RecieveDataStream;
+
+        public struct DataPacket
+        {
+            public NetworkConnection Connection;
+            public DataStreamReader Chunk;
+        } 
+
+        public ServerNetworkManager(PlayerInfo playerInfo) : base(playerInfo)
+        {
+            _Connections = new NativeList<NetworkConnection>(16, Allocator.Persistent);
+            _ConnectConnIdList = new NativeList<int>(4, Allocator.Persistent);
+            _DisconnectConnIdList = new NativeList<int>(4, Allocator.Persistent);
+            _RelayWriter = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Persistent);
+            //_RecieveDataStream = new NativeMultiHashMap<int, DataStreamReader>(32, Allocator.Persistent);
+            _RecieveDataStream = new NativeList<DataPacket>(32, Allocator.Persistent);
+        }
+
+        public override void Dispose()
+        {
+            if (_IsDispose) return;
+
+            if (NetwrokState != NetworkConnection.State.Disconnected)
+            {
+                StopComplete();
+            }
+
+            JobHandle.Complete();
+
+            _Connections.Dispose();
+            _ConnectConnIdList.Dispose();
+            _DisconnectConnIdList.Dispose();
+            _RelayWriter.Dispose();
+            _RecieveDataStream.Dispose();
+
+            base.Dispose();
+        }
+
+        protected void Start()
+        {
+            LeaderStatTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            NetwrokState = NetworkConnection.State.Connecting;
+
+            _ActiveConnectionInfoList.Add(new SCConnectionInfo(NetworkConnection.State.Connecting));
+            MyPlayerInfo.PlayerId = ServerPlayerId;
+            RegisterPlayerId(MyPlayerInfo as PlayerInfo, default);
+        }
+
+        /// <summary>
+        /// サーバー停止
+        /// </summary>
+        public override void Stop()
+        {
+            base.Stop();
+            if (NetwrokState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                return;
+            }
+            JobHandle.Complete();
+
+            //すべてのPlayerに停止を伝えてからサーバーも停止
+            if (GetPlayerCount() == 1)
+            {
+                StopComplete();
+            }
+            else
+            {
+                BroadcastStopNetworkPacket();
+                Debug.Log("Stop");
+            }
+        }
+
+        // すべてのClientが切断したら呼ぶ
+        protected override void StopComplete()
+        {
+            if (NetwrokState != NetworkConnection.State.Disconnected)
+            {
+                foreach (var pair in _UniquePlayerIdTable)
+                {
+                    ExecOnUnregisterPlayer(pair.Value, pair.Key);
+                }
+            }
+            base.StopComplete();
+            if (NetwrokState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("CompleteStop Failed  currentState = " + NetwrokState);
+                return;
+            }
+            JobHandle.Complete();
+
+            _ConnIdPlayerIdTable.Clear();
+            _Connections.Clear();
+            _ConnectConnIdList.Clear();
+            _DisconnectConnIdList.Clear();
+            _RelayWriter.Clear();
+            _RecieveDataStream.Clear();
+
+            NetwrokState = NetworkConnection.State.Disconnected;
+        }
+
+        public override DefaultConnectionInfo GetConnectionInfo(ushort playerId)
+        {
+            if (playerId >= _ActiveConnectionInfoList.Count) return null;
+            return _ActiveConnectionInfoList[playerId];
+        }
+        public override DefaultConnectionInfo GetConnectionInfo(ulong uniqueId)
+        {
+            if (UniquePlayerIdTable.TryGetValue(uniqueId, out ushort playerId))
+            {
+                return GetConnectionInfo(playerId);
+            }
+            return null;
+        }
+        public override DefaultPlayerInfo GetPlayerInfo(ushort playerId)
+        {
+            if (playerId >= _ActivePlayerInfoList.Count) return null;
+            return _ActivePlayerInfoList[playerId];
+        }
+        public override DefaultPlayerInfo GetPlayerInfo(ulong uniqueId)
+        {
+            if (UniquePlayerIdTable.TryGetValue(uniqueId, out ushort playerId))
+            {
+                return GetPlayerInfo(playerId);
+            }
+            return null;
+        }
+        public override bool GetPlayerId(ulong uniqueId, out ushort playerId)
+        {
+            playerId = 0;
+            return UniquePlayerIdTable.TryGetValue(uniqueId, out playerId);
+        }
+        public override bool GetUniqueId(ushort playerId, out ulong uniqueId)
+        {
+            var playerInfo = (playerId < _ActivePlayerInfoList.Count) ? _ActivePlayerInfoList[playerId] : null;
+            uniqueId = (playerInfo == null) ? 0 : playerInfo.UniqueId;
+            return uniqueId != 0;
+        }
+        
+        //新しいPlayerを登録する処理
+        protected void RegisterPlayerId(PlayerInfo playerInfo, NetworkConnection connection)
+        {
+            base.RegisterPlayerId(playerInfo.PlayerId, playerInfo.UniqueId);
+
+            //ConnectionInfo更新
+            while (_Connections.Length <= playerInfo.PlayerId) _Connections.Add(default);
+            _Connections[playerInfo.PlayerId] = connection;
+            _ConnIdPlayerIdTable[connection.InternalId] = playerInfo.PlayerId;
+
+            //ConnectionInfo更新
+            while (playerInfo.PlayerId >= _ActiveConnectionInfoList.Count) _ActiveConnectionInfoList.Add(null);
+            _ActiveConnectionInfoList[playerInfo.PlayerId] = new SCConnectionInfo(NetworkConnection.State.Connected);
+
+            //playerInfo領域確保
+            while (playerInfo.PlayerId >= _ActivePlayerInfoList.Count) _ActivePlayerInfoList.Add(null);
+            _ActivePlayerInfoList[playerInfo.PlayerId] = playerInfo;
+            _UniquePlayerIdTable[playerInfo.UniqueId] = playerInfo.PlayerId;
+            
+            //イベント通知
+            ExecOnRegisterPlayer(playerInfo.PlayerId, playerInfo.UniqueId);
+        }
+
+        //Playerを登録解除する処理
+        protected void UnregisterPlayerId(ulong uniqueId)
+        {
+            if (!GetPlayerId(uniqueId, out ushort playerId) && playerId >= _Connections.Length)
+            {
+                return;
+            }
+            var connect = _Connections[playerId];
+
+            if (IsActivePlayerId(playerId) && connect != default)
+            {
+                _ConnIdPlayerIdTable.Remove(connect.InternalId);
+                _UniquePlayerIdTable.Remove(uniqueId);
+                _ActiveConnectionInfoList[playerId] = default;
+                _ActivePlayerInfoList[playerId] = null;
+
+                base.UnregisterPlayerId(playerId, uniqueId);
+
+                ExecOnUnregisterPlayer(playerId, uniqueId);
+            }
+        }
+
+        protected virtual void ReconnectPlayerId(PlayerInfo playerInfo, NetworkConnection connection)
+        {
+            //ConnectionInfo更新
+            while (_Connections.Length <= playerInfo.PlayerId) _Connections.Add(default);
+            _Connections[playerInfo.PlayerId] = connection;
+            _ConnIdPlayerIdTable[connection.InternalId] = playerInfo.PlayerId;
+
+            //ConnectionInfo更新
+            _ActiveConnectionInfoList[playerInfo.PlayerId].State = NetworkConnection.State.Connected;
+
+            //playerInfo領域確保
+            while (playerInfo.PlayerId >= _ActivePlayerInfoList.Count) _ActivePlayerInfoList.Add(null);
+            _ActivePlayerInfoList[playerInfo.PlayerId] = playerInfo;
+            _UniquePlayerIdTable[playerInfo.UniqueId] = playerInfo.PlayerId;
+
+            //イベント通知
+            ExecOnReconnectPlayer(playerInfo.PlayerId, playerInfo.UniqueId);
+        }
+
+        protected virtual void DisconnectPlayerId(ulong uniqueId)
+        {
+            if (!GetPlayerId(uniqueId, out ushort playerId))
+            {
+                return;
+            }
+            if (IsActivePlayerId(playerId))
+            {
+                var info = _ActiveConnectionInfoList[playerId];
+                if (info != null)
+                {
+                    info.State = NetworkConnection.State.AwaitingResponse;
+                    info.DisconnectTime = Time.realtimeSinceStartup;
+
+                    ExecOnDisconnectPlayer(playerId, uniqueId);
+                }
+                else
+                {
+                    Debug.LogError($"DisconnectPlayerId Error. ID={playerId}は未登録");
+                }
+            }
+            else
+            {
+                Debug.LogError($"DisconnectPlayerId Error. ID={playerId}は未登録");
+            }
+        }
+
+        protected void SendUpdateAllPlayerPacket(ushort targetPlayerId)
+        {
+            var packet = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Temp);
+
+            packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+            for (ushort i = 1; i < _ActivePlayerInfoList.Count; i++)
+            {
+                var connInfo = _ActiveConnectionInfoList[i];
+                var playerInfo = _ActivePlayerInfoList[i];
+                if (connInfo != null && playerInfo != null && connInfo.State != NetworkConnection.State.Connecting)
+                {
+                    packet.Write((byte)connInfo.State);
+                    playerInfo.AppendPlayerInfoPacket(ref packet);
+                }
+                else
+                {
+                    playerInfo = new PlayerInfo() { PlayerId = i };
+                    packet.Write((byte)NetworkConnection.State.Disconnected);
+                    playerInfo.AppendPlayerInfoPacket(ref packet);
+                }
+
+                if (packet.Length > NetworkParameterConstants.MTU - playerInfo.PacketSize - 1)
+                {
+                    Send(targetPlayerId, packet, QosType.Reliable);
+                    packet.Clear();
+                    packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+                }
+            }
+            if (packet.Length > 1)
+            {
+                Send(targetPlayerId, packet, QosType.Reliable);
+            }
+            packet.Dispose();
+        }
+
+        protected void BroadcastUpdatePlayerPacket(ushort playerId)
+        {
+            var connInfo = _ActiveConnectionInfoList[playerId];
+            var playerInfo = _ActivePlayerInfoList[playerId];
+            if (connInfo != null && playerInfo != null && connInfo.State != NetworkConnection.State.Connecting)
+            {
+                var packet = new DataStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
+                packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+                packet.Write((byte)connInfo.State);
+                playerInfo.AppendPlayerInfoPacket(ref packet);
+                Broadcast(packet, QosType.Reliable);
+                packet.Dispose();
+            }
+            else
+            {
+                playerInfo = new PlayerInfo {  PlayerId = playerId };
+                var packet = new DataStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
+                packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+                packet.Write((byte)NetworkConnection.State.Disconnected);
+                playerInfo.AppendPlayerInfoPacket(ref packet);
+                Broadcast(packet, QosType.Reliable);
+                packet.Dispose();
+            }
+        }
+
+        private void SendRegisterPlayerPacket(ushort id, bool isReconnect)
+        {
+            var registerPacket = new DataStreamWriter(14 + _ActivePlayerIdList.Count + MyPlayerInfo.PacketSize, Allocator.Temp);
+            registerPacket.Write((byte)BuiltInPacket.Type.RegisterPlayer);
+            registerPacket.Write(id);
+            registerPacket.Write(LeaderStatTime);
+            registerPacket.Write((byte)(isReconnect ? 1 : 0));
+
+            registerPacket.Write((byte)_ActivePlayerIdList.Count);
+            for (int i = 0; i < _ActivePlayerIdList.Count; i++)
+            {
+                registerPacket.Write(_ActivePlayerIdList[i]);
+            }
+            MyPlayerInfo.AppendPlayerInfoPacket(ref registerPacket);
+
+            Debug.Log($"Send Reg {id} : {LeaderStatTime} : {isReconnect} : count={_ActivePlayerIdList.Count} : {registerPacket.Length}");
+            
+            Send(id, registerPacket, QosType.Reliable);
+
+            registerPacket.Dispose();
+        }
+
+        private void BroadcastStopNetworkPacket()
+        {
+            using (var stopNetworkPacket = new DataStreamWriter(2, Allocator.Temp))
+            {
+                stopNetworkPacket.Write((byte)BuiltInPacket.Type.StopNetwork);
+                stopNetworkPacket.Write((byte)0);    //TODO error code
+
+                Broadcast(stopNetworkPacket, QosType.Reliable, true);
+            }
+        }
+        
+        /// <summary>
+        /// 受信パケットの受け取りなど、最初に行うべきUpdateループ
+        /// </summary>
+        public override void OnFirstUpdate()
+        {
+            if (NetwrokState == NetworkConnection.State.Disconnected)
+            {
+                return;
+            }
+
+            //job完了待ち
+            JobHandle.Complete();
+
+            _SinglePacketBuffer.Clear();
+            _BroadcastRudpChunkedPacketManager.Clear();
+            _BroadcastUdpChunkedPacketManager.Clear();
+
+            //接続確認
+            NetworkConnection connection;
+            while ((connection = NetworkDriver.Accept()) != default)
+            {
+                Debug.Log("Accepted a connection =" + connection.InternalId);
+            }
+
+            //一定時間切断したままのplayerの登録を解除
+            for (ushort i = 0; i < _ActiveConnectionInfoList.Count; i++)
+            {
+                var conInfo = GetConnectionInfo(i);
+                var playerInfo = GetPlayerInfo(i);
+                if (conInfo != null && playerInfo != null)
+                {
+                    if (conInfo.State == NetworkConnection.State.Connecting)
+                    {
+                        if (Time.realtimeSinceStartup - conInfo.DisconnectTime > registrationTimeOut)
+                        {
+                            UnregisterPlayerId(i, playerInfo.UniqueId);
+                        }
+                    }
+                }
+            }
+
+            for (ushort i=0;i< _DisconnectConnIdList.Length;i++)
+            {
+                if(_ConnIdPlayerIdTable.TryGetValue(_DisconnectConnIdList[i], out ushort playerId))
+                {
+                    if (GetUniqueId(playerId, out ulong uniqueId))
+                    {
+                        var connInfo = GetConnectionInfo(uniqueId);
+                        if (connInfo != null && connInfo.State != NetworkConnection.State.AwaitingResponse)
+                        {
+                            Debug.Log($"_DisconnectConnIdList[{i}] : {_DisconnectConnIdList[i]} PlayerID={playerId}");
+                            DisconnectPlayerId(uniqueId);
+                            BroadcastUpdatePlayerPacket(playerId);
+                        }
+                    }
+                }
+            }
+
+            for (int i = 0; i < _RecieveDataStream.Length; i++)
+            {
+                connection = _RecieveDataStream[i].Connection;
+                var chunk = _RecieveDataStream[i].Chunk;
+                _ConnIdPlayerIdTable.TryGetValue(connection.InternalId, out ushort senderPlayerId);
+
+                var ctx = default(DataStreamReader.Context);
+                byte type = chunk.ReadByte(ref ctx);
+
+                DeserializePacket(senderPlayerId, type, connection, ref chunk, ref ctx);
+            }
+
+            _IsFirstUpdateComplete = true;
+        }
+
+        protected virtual bool DeserializePacket(ushort senderPlayerId, byte type, NetworkConnection con, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
+        {
+            //Debug.Log($"DeserializePacket : {senderPlayerId} : {(BuiltInPacket.Type)type} {chunk.Length}");
+            switch (type)
+            {
+                case (byte)BuiltInPacket.Type.RegisterPlayer:
+                    {
+                        var addPlayerInfo = new PlayerInfo();
+                        addPlayerInfo.Deserialize(ref chunk, ref ctx2);
+
+                        var connInfo = GetConnectionInfo(addPlayerInfo.UniqueId);
+                        if (connInfo == null || connInfo.State != NetworkConnection.State.Connected)
+                        {
+                            bool isReconnect = _UniquePlayerIdTable.TryGetValue(addPlayerInfo.UniqueId, out ushort newPlayerId);
+
+                            if (!isReconnect)
+                            {
+                                newPlayerId = GetDeactivePlayerId();
+                            }
+
+                            addPlayerInfo.PlayerId = newPlayerId;
+
+                            Debug.Log($"Register newID={newPlayerId} UniqueId={addPlayerInfo.UniqueId} IsRec={isReconnect}");
+                            
+                            if (isReconnect)
+                            {
+                                ReconnectPlayerId(addPlayerInfo, con);
+                                SendRegisterPlayerPacket(newPlayerId, isReconnect);
+                            }
+                            else
+                            {
+                                RegisterPlayerId(addPlayerInfo, con);
+                                SendRegisterPlayerPacket(newPlayerId, isReconnect);
+                            }
+                            BroadcastUpdatePlayerPacket(addPlayerInfo.PlayerId);
+
+                            SendUpdateAllPlayerPacket(newPlayerId);
+
+                            NetwrokState = NetworkConnection.State.Connected;
+                        }
+                    }
+                    break;
+                case (byte)BuiltInPacket.Type.ReconnectPlayer:
+                    {
+                        var reconnectPlayerInfo = new PlayerInfo();
+                        reconnectPlayerInfo.Deserialize(ref chunk, ref ctx2);
+                        if(GetPlayerId(reconnectPlayerInfo.UniqueId, out ushort playerId) && playerId == reconnectPlayerInfo.PlayerId)
+                        {
+                            var connInfo = GetConnectionInfo(reconnectPlayerInfo.UniqueId);
+                            if (connInfo == null || connInfo.State != NetworkConnection.State.Connected)
+                            {
+                                ReconnectPlayerId(reconnectPlayerInfo, con);
+                                BroadcastUpdatePlayerPacket(reconnectPlayerInfo.PlayerId);
+                                SendUpdateAllPlayerPacket(playerId);
+                            }
+                        }
+                    }
+                    break;
+                case (byte)BuiltInPacket.Type.UnregisterPlayer:
+                    //登録解除リクエスト
+                    {
+                        ulong unregisterUniqueId = chunk.ReadULong(ref ctx2);
+                        if(GetPlayerId(unregisterUniqueId, out ushort playerId))
+                        {
+                            var connInfo = GetConnectionInfo(unregisterUniqueId);
+                            if (connInfo != null && connInfo.State != NetworkConnection.State.Disconnected)
+                            {
+                                UnregisterPlayerId(unregisterUniqueId);
+                                BroadcastUpdatePlayerPacket(playerId);
+                                NetworkDriver.Disconnect(con);
+
+                                if (IsStopRequest && GetPlayerCount() == 1)
+                                {
+                                    StopComplete();
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                case (byte)BuiltInPacket.Type.UpdatePlayerInfo:
+                    {
+                        //Serverは追えているのでPlayerInfoの更新のみ
+                        var state = (NetworkConnection.State)chunk.ReadByte(ref ctx2);
+                        var ctx3 = ctx2;
+                        var playerId = chunk.ReadUShort(ref ctx3);
+
+                        _ActivePlayerInfoList[playerId].Deserialize(ref chunk, ref ctx2);
+                        BroadcastUpdatePlayerPacket(playerId);
+                    }
+                    break;
+                default:
+                    {
+                        //自分宛パケットの解析
+                        var playerInfo = (senderPlayerId < _ActivePlayerInfoList.Count) ? _ActivePlayerInfoList[senderPlayerId] : null;
+                        ulong senderUniqueId = (playerInfo == null) ? 0 : playerInfo.UniqueId;
+                        RecieveData(senderPlayerId, senderUniqueId, type, chunk, ctx2);
+                    }
+                    break;
+            }
+            return false;
+        }
+
+        private float _PrevSendTime;
+
+        /// <summary>
+        /// まとめたパケット送信など、最後に行うべきUpdateループ
+        /// </summary>
+        public override void OnLastUpdate()
+        {
+            if (NetwrokState == NetworkConnection.State.Disconnected)
+            {
+                return;
+            }
+
+            if (!_IsFirstUpdateComplete) return;
+
+            //main thread処理
+            if (NetwrokState == NetworkConnection.State.Connected || NetwrokState == NetworkConnection.State.AwaitingResponse)
+            {
+                if(Time.realtimeSinceStartup - _PrevSendTime > 1.0)
+                {
+                    _PrevSendTime = Time.realtimeSinceStartup;
+                    SendMeasureLatencyPacket();
+                }
+            }
+            _BroadcastRudpChunkedPacketManager.WriteCurrentBuffer();
+            _BroadcastUdpChunkedPacketManager.WriteCurrentBuffer();
+            _RecieveDataStream.Clear();
+
+            JobHandle = ScheduleSendPacket(default);
+            JobHandle = NetworkDriver.ScheduleUpdate(JobHandle);
+            JobHandle = ScheduleRecieve(JobHandle);
+
+            JobHandle.ScheduleBatchedJobs();
+        }
+
+        protected void SendMeasureLatencyPacket()
+        {
+            //Debug.Log("SendMeasureLatencyPacket");
+            using (var packet = new DataStreamWriter(9, Allocator.Temp))
+            {
+                packet.Write((byte)BuiltInPacket.Type.MeasureRtt);
+                packet.Write(GamePacketManager.currentUnixTime);
+
+                Broadcast(packet, QosType.Unreliable, true);
+            }
+        }
+
+        protected JobHandle ScheduleSendPacket(JobHandle jobHandle)
+        {
+            var sendPacketsJob = new SendPacketaJob()
+            {
+                driver = NetworkDriver,
+                connections = _Connections,
+                singlePacketBuffer = _SinglePacketBuffer,
+                rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBuffer,
+                udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBuffer,
+                qosPipelines = _QosPipelines,
+            };
+
+            return sendPacketsJob.Schedule(jobHandle);
+        }
+
+        protected JobHandle ScheduleRecieve(JobHandle jobHandle)
+        {
+            var recievePacketJob = new RecievePacketJob()
+            {
+                driver = NetworkDriver,
+                connections = _Connections,
+                qosPipelines = _QosPipelines,
+                connectConnIdList = _ConnectConnIdList,
+                disconnectConnIdList = _DisconnectConnIdList,
+                relayWriter = _RelayWriter,
+                dataStream = _RecieveDataStream,
+            };
+            return recievePacketJob.Schedule(jobHandle);
+        }
+
+        struct SendPacketaJob : IJob
+        {
+            public Driver driver;
+            [ReadOnly]
+            public NativeArray<NetworkConnection> connections;
+
+            [ReadOnly]
+            public DataStreamWriter singlePacketBuffer;
+            [ReadOnly]
+            public DataStreamWriter rudpPacketBuffer;
+            [ReadOnly]
+            public DataStreamWriter udpPacketBuffer;
+
+            public NativeArray<NetworkPipeline> qosPipelines;
+
+            public unsafe void Execute()
+            {
+                var multiCastList = new NativeList<ushort>(Allocator.Temp);
+                var temp = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Temp);
+
+                if(singlePacketBuffer.Length != 0)
+                {
+                    var reader = new DataStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
+                    var ctx = default(DataStreamReader.Context);
+                    while (true)
+                    {
+                        temp.Clear();
+
+                        int pos = reader.GetBytesRead(ref ctx);
+                        if (pos >= reader.Length) break;
+
+                        byte qos = reader.ReadByte(ref ctx);
+                        ushort targetPlayerId = reader.ReadUShort(ref ctx);
+
+                        if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+                        {
+                            multiCastList.Clear();
+                            ushort multiCastCount = reader.ReadUShort(ref ctx);
+                            for (int i = 0; i < multiCastCount; i++)
+                            {
+                                multiCastList.Add(reader.ReadUShort(ref ctx));
+                            }
+                        }
+
+                        ushort packetDataLen = reader.ReadUShort(ref ctx);
+                        if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
+
+                        var packet = reader.ReadChunk(ref ctx, packetDataLen);
+                        byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
+
+                        temp.Write(qos);
+                        temp.Write(targetPlayerId);
+                        temp.Write(ServerPlayerId);
+                        temp.Write(packetDataLen);
+                        temp.WriteBytes(packetPtr, packetDataLen);
+
+                        if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
+                        {
+                            for (ushort i = 1; i < connections.Length; i++)
+                            {
+                                if (connections[i] != default)
+                                {
+                                    connections[i].Send(driver, qosPipelines[qos], temp);
+                                    //connections[i].Send(driver, temp);
+                                }
+                            }
+                        }
+                        else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+                        {
+                            for (ushort i = 0; i < multiCastList.Length; i++)
+                            {
+                                if (connections[multiCastList[i]] != default)
+                                {
+                                    connections[multiCastList[i]].Send(driver, qosPipelines[qos], temp);
+                                    //connections[multiCastList[i]].Send(driver, temp);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            connections[targetPlayerId].Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
+                            //connections[targetPlayerId].Send(driver, temp);
+                        }
+                        //Debug.Log("singlePacketBuffer : " + packetDataLen);
+                    }
+                }
+
+                if (udpPacketBuffer.Length != 0)
+                {
+                    var reader = new DataStreamReader(udpPacketBuffer, 0, udpPacketBuffer.Length);
+                    var ctx = default(DataStreamReader.Context);
+                    while (true)
+                    {
+                        temp.Clear();
+
+                        int pos = reader.GetBytesRead(ref ctx);
+                        if (pos >= reader.Length) break;
+
+                        ushort packetDataLen = reader.ReadUShort(ref ctx);
+                        if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
+
+                        var packet = reader.ReadChunk(ref ctx, packetDataLen);
+                        byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
+
+                        //chunkはBroadcast + Unrealiableのみ
+                        temp.Write((byte)QosType.Unreliable);
+                        temp.Write(NetworkLinkerConstants.BroadcastId);
+                        temp.Write(ServerPlayerId);
+                        //temp.Write(packetDataLen);
+                        temp.WriteBytes(packetPtr, packetDataLen);
+
+                        for (ushort i = 1; i < connections.Length; i++)
+                        {
+                            if (connections[i] != default)
+                            {
+                                connections[i].Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
+                                //connections[i].Send(driver, temp);
+                            }
+                        }
+                        //Debug.Log("chunkedPacketBuffer : " + packetDataLen);
+                    }
+                }
+                if (rudpPacketBuffer.Length != 0)
+                {
+                    var reader = new DataStreamReader(rudpPacketBuffer, 0, rudpPacketBuffer.Length);
+                    var ctx = default(DataStreamReader.Context);
+                    while (true)
+                    {
+                        temp.Clear();
+
+                        int pos = reader.GetBytesRead(ref ctx);
+                        if (pos >= reader.Length) break;
+
+                        ushort packetDataLen = reader.ReadUShort(ref ctx);
+                        if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
+
+                        var packet = reader.ReadChunk(ref ctx, packetDataLen);
+                        byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
+
+                        //chunkはBroadcast + Unrealiableのみ
+                        temp.Write((byte)QosType.Reliable);
+                        temp.Write(NetworkLinkerConstants.BroadcastId);
+                        temp.Write(ServerPlayerId);
+                        //temp.Write(packetDataLen);
+                        temp.WriteBytes(packetPtr, packetDataLen);
+
+                        for (ushort i = 1; i < connections.Length; i++)
+                        {
+                            if (connections[i] != default)
+                            {
+                                connections[i].Send(driver, qosPipelines[(byte)QosType.Reliable], temp);
+                                //connections[i].Send(driver, temp);
+                            }
+                        }
+                        //Debug.Log("chunkedPacketBuffer : " + packetDataLen);
+                    }
+                }
+                temp.Dispose();
+            }
+        }
+
+        struct RecievePacketJob : IJob
+        {
+            public Driver driver;
+            [ReadOnly]
+            public NativeArray<NetworkConnection> connections;
+            public NativeArray<NetworkPipeline> qosPipelines;
+
+            public NativeList<int> connectConnIdList;
+            public NativeList<int> disconnectConnIdList;
+            public DataStreamWriter relayWriter;
+            //public NativeMultiHashMap<int, DataStreamReader> dataStream;
+            public NativeList<DataPacket> dataStream;
+
+            public unsafe void Execute()
+            {
+                var multiCastList = new NativeList<ushort>(Allocator.Temp);
+                connectConnIdList.Clear();
+                disconnectConnIdList.Clear();
+
+                NetworkConnection con;
+                DataStreamReader stream;
+                NetworkEvent.Type cmd;
+
+                while ((cmd = driver.PopEvent(out con, out stream)) != NetworkEvent.Type.Empty)
+                {
+                    if (cmd == NetworkEvent.Type.Connect)
+                    {
+                        //Debug.Log($"NetworkEvent.Type.Connect con={con.InternalId}");
+                        connectConnIdList.Add(con.InternalId);
+                    }
+                    else if (cmd == NetworkEvent.Type.Disconnect)
+                    {
+                        //Debug.Log($"NetworkEvent.Type.Disconnect con={con.InternalId}");
+                        disconnectConnIdList.Add(con.InternalId);
+                    }
+                    else if (cmd == NetworkEvent.Type.Data)
+                    {
+                        if (!stream.IsCreated)
+                        {
+                            continue;
+                        }
+                        //Debug.Log($"driver.PopEvent={cmd} con={con.InternalId} : {stream.Length}");
+
+                        //var c = new DataStreamReader.Context();
+                        //Debug.Log($"Dump : {string.Join(",", stream.ReadBytesAsArray(ref c, stream.Length))}");
+
+                        var ctx = new DataStreamReader.Context();
+                        byte qos = stream.ReadByte(ref ctx);
+                        ushort targetPlayerId = stream.ReadUShort(ref ctx);
+                        ushort senderPlayerId = stream.ReadUShort(ref ctx);
+
+                        if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+                        {
+                            multiCastList.Clear();
+                            ushort multiCastCount = stream.ReadUShort(ref ctx);
+                            for (int i = 0; i < multiCastCount; i++)
+                            {
+                                multiCastList.Add(stream.ReadUShort(ref ctx));
+                            }
+                        }
+
+                        if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
+                        {
+                            for (ushort i = 1; i < connections.Length; i++)
+                            {
+                                if (connections[i] != default && senderPlayerId != i)
+                                {
+                                    RelayPacket(i, stream, qos);
+                                }
+                            }
+                            PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
+                        }
+                        else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+                        {
+                            for (int i = 0; i < multiCastList.Length; i++)
+                            {
+                                if (multiCastList[i] == ServerPlayerId)
+                                {
+                                    PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
+                                }
+                                else
+                                {
+                                    if (senderPlayerId != multiCastList[i])
+                                    {
+                                        RelayPacket(multiCastList[i], stream, qos);
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (targetPlayerId == ServerPlayerId)
+                            {
+                                PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
+                            }
+                            else
+                            {
+                                RelayPacket(targetPlayerId, stream, qos);
+                            }
+                        }
+                    }
+                }
+                multiCastList.Dispose();
+            }
+
+            private void PurgeChunk(ushort senderPlayerId, NetworkConnection con, ref DataStreamReader stream, ref DataStreamReader.Context ctx)
+            {
+                while (true)
+                {
+                    int pos = stream.GetBytesRead(ref ctx);
+                    if (pos >= stream.Length) break;
+                    ushort dataLen = stream.ReadUShort(ref ctx);
+                    if (dataLen == 0 || pos + dataLen >= stream.Length) break;
+
+                    var chunk = stream.ReadChunk(ref ctx, dataLen);
+                    var ctx2 = new DataStreamReader.Context();
+                    byte type = chunk.ReadByte(ref ctx2);
+
+                    //if (type != (byte)BuiltInPacket.Type.MeasureRtt)
+                    //{
+                    //    var c = new DataStreamReader.Context();
+                    //    Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
+                    //}
+
+                    dataStream.Add(new DataPacket() { Connection = con, Chunk=chunk });
+                }
+            }
+
+            private unsafe void RelayPacket(ushort targetPlayerId, DataStreamReader stream, byte qos)
+            {
+                relayWriter.Clear();
+                relayWriter.WriteBytes(stream.GetUnsafeReadOnlyPtr(), stream.Length);
+                connections[targetPlayerId].Send(driver, qosPipelines[qos], relayWriter);
+                //connections[targetPlayerId].Send(driver, relayWriter);
+            }
+        }
+    }
 }

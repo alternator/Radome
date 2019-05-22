@@ -89,7 +89,7 @@ namespace ICKX.Radome {
 					writer.Write((byte)TransporterType.File);
 					writer.Write(hash);
 					writer.Write((byte)FlagDef.Cancel);
-					NetworkManager.Brodcast(writer, QosType.Reliable, true);
+					NetworkManager.Broadcast(writer, QosType.Reliable, true);
 				}
 				return true;
 			} else {
@@ -111,7 +111,7 @@ namespace ICKX.Radome {
 			return System.BitConverter.ToInt32 (crypto256.ComputeHash (fs), 0);
 		}
 
-		private void OnRecievePacketMethod (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
+		private void OnRecievePacketMethod (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
 			if (type == (byte)BuiltInPacket.Type.DataTransporter) {
 				var transType = stream.ReadByte (ref ctx);
 				if (transType != Type) return;

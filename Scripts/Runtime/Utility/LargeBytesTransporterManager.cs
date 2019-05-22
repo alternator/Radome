@@ -70,7 +70,7 @@ namespace ICKX.Radome {
 						writer.Write (name);
 						writer.Write (data.Length);
 						writer.WriteBytes (dataPtr, dataSize);
-						NetworkManager.Brodcast (writer, QosType.Reliable, true);
+						NetworkManager.Broadcast (writer, QosType.Reliable, true);
 					}
 				}
 			}
@@ -112,7 +112,7 @@ namespace ICKX.Radome {
 								writer.Write (transporter.hash);
 								writer.Write ((byte)flag);
 								writer.WriteBytes (dataPtr, dataSize);
-								NetworkManager.Brodcast (writer, QosType.Reliable, true);
+								NetworkManager.Broadcast (writer, QosType.Reliable, true);
 							}
 						}
 					}

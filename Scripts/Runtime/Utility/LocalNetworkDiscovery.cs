@@ -131,7 +131,7 @@ public class LocalNetworkDiscovery : MonoBehaviour {
 
 							var str = reader.ReadString(ref ctx);
 
-							//Debug.Log ("OnReciveBroadcast key=" + key + ", version=" + version + ", str=" + str + "time=" + Time.time);
+							Debug.Log ("OnReciveBroadcast key=" + key + ", version=" + version + ", str=" + str + "time=" + Time.time);
 							OnReciveBroadcast?.Invoke (result.RemoteEndPoint, key, version, str);
 							//Stop ();
 						}

@@ -181,7 +181,7 @@ namespace ICKX.Radome {
 			RequestSyncAuthor (identity.sceneHash, identity.netId);
 		}
 
-		private static void OnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
+		private static void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
 			switch ((BuiltInPacket.Type)type) {
 				case BuiltInPacket.Type.ReserveNetId:
 					RecieveReserveNetId (senderPlayerId, ref recievePacket, ref ctx);

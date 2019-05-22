@@ -9,12 +9,13 @@ namespace ICKX.Radome {
         public enum Type : byte {
             MeasureRtt = 200,
             RegisterPlayer,
+            ReconnectPlayer,
             UnregisterPlayer,
-			NotifyRegisterPlayer,
-			NotifyUnegisterPlayer,
-			NotifyReconnectPlayer,
-			NotifyDisconnectPlayer,
-			UpdatePlayerInfo,
+            //NotifyRegisterPlayer,
+            //NotifyUnegisterPlayer,
+            //NotifyReconnectPlayer,
+            //NotifyDisconnectPlayer,
+            UpdatePlayerInfo,
 			StopNetwork,
 			RelayChunkedPacket,
 

@@ -101,7 +101,7 @@ namespace ICKX.Radome {
 						writer.Write((int)fileStream.Length);
 						writer.Write((ushort)dataSize);
 						writer.WriteBytes(dataPtr, dataSize);
-						NetworkManager.Brodcast(writer, QosType.Reliable, true);
+						NetworkManager.Broadcast(writer, QosType.Reliable, true);
 					}
 				}
 			}
@@ -157,7 +157,7 @@ namespace ICKX.Radome {
 								writer.Write ((byte)flag);
 								//writer.Write ((ushort)dataSize);
 								writer.WriteBytes (dataPtr, dataSize);
-								NetworkManager.Brodcast (writer, QosType.Reliable, true);
+								NetworkManager.Broadcast (writer, QosType.Reliable, true);
 							}
 						}
 					}
