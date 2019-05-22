@@ -187,32 +187,44 @@ namespace ICKX.Radome {
 						    uncheckedPacketCount[0] = 0;
 					    }
                     }
-					//受け取り確認できてないパケットを再送
-					uncheckedPacketsReader = new DataStreamReader (uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
-					ctx = new DataStreamReader.Context ();
-					for (int i = 0; i < uncheckedPacketCount[0]; i++) {
-						var size = uncheckedPacketsReader.ReadUShort (ref ctx);
-						var frame = uncheckedPacketsReader.ReadInt (ref ctx);
-						var chunk = uncheckedPacketsReader.ReadChunk (ref ctx, size);
-						ushort frameCount = (ushort)(currentFrame - frame);
 
-						//タイムアウト
-						if (frameCount > NetworkLinkerConstants.TimeOutFrameCount) {
-							Debug.LogWarning ("uncheckedSelfReliablePackets FrameCount TimeOut Index=" + i + "/" + uncheckedPacketCount[0]);
-						}
+                    bool isUncheckTimeOut = false;
+                    //受け取り確認できてないパケットを再送
+                    uncheckedPacketsReader = new DataStreamReader(uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
+                    ctx = new DataStreamReader.Context();
+                    for (int i = 0; i < uncheckedPacketCount[0]; i++)
+                    {
+                        var size = uncheckedPacketsReader.ReadUShort(ref ctx);
+                        var frame = uncheckedPacketsReader.ReadInt(ref ctx);
+                        var chunk = uncheckedPacketsReader.ReadChunk(ref ctx, size);
+                        ushort frameCount = (ushort)(currentFrame - frame);
 
-						if (Mathf.IsPowerOfTwo (frameCount)) {
-							//if (frameCount == 64 || frameCount == 1024) {
-							//	Debug.Log ("ResendUncheckedPacket : index=" + i + ", frameCount=" + frameCount);
-							//}
-							//時間が経つごとに送信間隔を開ける n乗のフレームの時だけ送る
-							using (var temp = new DataStreamWriter (size, Allocator.Temp)) {
-								temp.WriteBytes (chunk.GetUnsafeReadOnlyPtr (), size);
-								connection.Send (driver, temp);
-							}
-						}
-					}
-				}
+                        //タイムアウト
+                        if (frameCount > NetworkLinkerConstants.TimeOutFrameCount)
+                        {
+                            isUncheckTimeOut = true;
+                            IncrementSequenceNumber(SeqNumberDef.OtherAck);
+                        }
+
+                        if (frameCount >= 2 && Mathf.IsPowerOfTwo(frameCount / 2))
+                        {
+                            //if (frameCount == 64 || frameCount == 1024) {
+                            //	Debug.Log ("ResendUncheckedPacket : index=" + i + ", frameCount=" + frameCount);
+                            //}
+                            //時間が経つごとに送信間隔を開ける n乗のフレームの時だけ送る
+                            using (var temp = new DataStreamWriter(size, Allocator.Temp))
+                            {
+                                temp.WriteBytes(chunk.GetUnsafeReadOnlyPtr(), size);
+                                connection.Send(driver, temp);
+                            }
+                        }
+                    }
+
+                    if (isUncheckTimeOut)
+                    {
+                        Debug.LogWarning("uncheckedSelfReliablePackets FrameCount TimeOut Uncheck Count=" + uncheckedPacketCount[0]);
+                    }
+                }
 
 				uncheckedPacketsWriter.Clear ();
 				if (uncheckedNewPacketsWriter.Length > 0) {
