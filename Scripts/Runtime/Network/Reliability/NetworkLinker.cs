@@ -234,8 +234,19 @@ namespace ICKX.Radome {
 					}
 				}
 				uncheckedNewPacketsWriter.Clear ();
-			}
-		}
+            }
+            void IncrementSequenceNumber(SeqNumberDef def)
+            {
+                if (seqNumbers[(int)def] == ushort.MaxValue)
+                {
+                    seqNumbers[(int)def] = 0;
+                }
+                else
+                {
+                    seqNumbers[(int)def]++;
+                }
+            }
+        }
 
 		struct UpdateJob : IJob {
 			public T driver;
