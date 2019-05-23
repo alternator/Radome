@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using Unity.Collections;
 using Unity.Jobs;
@@ -62,10 +63,12 @@ namespace ICKX.Radome
             if (NetworkDriver.Bind(endPoint) != 0)
             {
                 Debug.Log("Failed to bind to port");
+                ExecOnConnectFailed(1);
             }
             else
             {
                 NetworkDriver.Listen();
+                ExecOnConnect();
                 Debug.Log("Listen");
             }
 
@@ -473,6 +476,19 @@ namespace ICKX.Radome
                             Debug.Log($"_DisconnectConnIdList[{i}] : {_DisconnectConnIdList[i]} PlayerID={playerId}");
                             DisconnectPlayerId(uniqueId);
                             BroadcastUpdatePlayerPacket(playerId);
+
+                            if(_ActiveConnectionInfoList.Count >= 2)
+                            {
+                                bool isAllDisconnect = _ActiveConnectionInfoList
+                                    .GetRange(1, _ActiveConnectionInfoList.Count - 1)
+                                    .Where(info => info != null)
+                                    .All(info => info.State == NetworkConnection.State.AwaitingResponse);
+
+                                if (isAllDisconnect)
+                                {
+                                    ExecOnDisconnectAll(1);
+                                }
+                            }
                         }
                     }
                 }
@@ -567,6 +583,7 @@ namespace ICKX.Radome
                                 if (IsStopRequest && GetPlayerCount() == 1)
                                 {
                                     StopComplete();
+                                    ExecOnDisconnectAll(0);
                                 }
                             }
                         }

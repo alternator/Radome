@@ -30,10 +30,24 @@ namespace ICKX.Radome {
 		/// </summary>
 		public static NetworkManagerBase NetworkManager { get; private set; } = null;
 
-		/// <summary>
-		/// 誰かPlayerが再接続した場合に呼ばれるイベント
-		/// </summary>
-		public static event OnReconnectPlayerEvent OnReconnectPlayer = null;
+        /// <summary>
+        /// 接続処理がすべて完了した際に呼ばれるイベント
+        /// Serverは起動時にすぐ呼ばれる
+        /// </summary>
+        public static event OnConnectEvent OnConnect = null;
+        /// <summary>
+        /// 切断時に呼ばれるイベント error=0なら正常切断
+        /// </summary>
+        public static event OnDisconnectAllEvent OnDisconnectAll = null;
+        /// <summary>
+        /// 接続自体が失敗した際に呼ばれるイベント
+        /// </summary>
+        public static event OnConnectFailedEvent OnConnectFailed = null;
+
+        /// <summary>
+        /// 誰かPlayerが再接続した場合に呼ばれるイベント
+        /// </summary>
+        public static event OnReconnectPlayerEvent OnReconnectPlayer = null;
 		/// <summary>
 		/// 誰かPlayerが通信状況などで切断した場合に呼ばれるイベント（申告して意図的に退出した場合は呼ばれない）
 		/// </summary>
@@ -110,8 +124,11 @@ namespace ICKX.Radome {
             RemoveNetworkManager ();
 			NetworkManager = networkManager;
 
-			NetworkManager.OnReconnectPlayer += ExecOnReconnectPlayer;
-			NetworkManager.OnDisconnectPlayer += ExecOnDisconnectPlayer;
+            NetworkManager.OnConnect += ExecOnCconnect;
+            NetworkManager.OnDisconnectAll += ExecOnDisconnectAll;
+            NetworkManager.OnConnectFailed += ExecOnCconnectFailed;
+            NetworkManager.OnReconnectPlayer += ExecOnReconnectPlayer;
+            NetworkManager.OnDisconnectPlayer += ExecOnDisconnectPlayer;
 			NetworkManager.OnRegisterPlayer += ExecOnRegisterPlayer;
 			NetworkManager.OnUnregisterPlayer += ExecOnUnregisterPlayer;
 			NetworkManager.OnRecievePacket += ExecOnRecievePacket;
@@ -120,7 +137,10 @@ namespace ICKX.Radome {
 		public static void RemoveNetworkManager ()
         {
             if (NetworkManager != null) {
-				NetworkManager.OnReconnectPlayer -= ExecOnReconnectPlayer;
+                NetworkManager.OnConnect -= ExecOnCconnect;
+                NetworkManager.OnDisconnectAll -= ExecOnDisconnectAll;
+                NetworkManager.OnConnectFailed -= ExecOnCconnectFailed;
+                NetworkManager.OnReconnectPlayer -= ExecOnReconnectPlayer;
 				NetworkManager.OnDisconnectPlayer -= ExecOnDisconnectPlayer;
 				NetworkManager.OnRegisterPlayer -= ExecOnRegisterPlayer;
 				NetworkManager.OnUnregisterPlayer -= ExecOnUnregisterPlayer;
@@ -129,7 +149,13 @@ namespace ICKX.Radome {
 			}
 		}
 
-		private static void ExecOnReconnectPlayer (ushort playerId, ulong uniqueId) { OnReconnectPlayer?.Invoke (playerId, uniqueId); }
+        private static void ExecOnCconnect() { OnConnect?.Invoke(); }
+
+        private static void ExecOnDisconnectAll(byte errorCode) { OnDisconnectAll?.Invoke(errorCode); }
+
+        private static void ExecOnCconnectFailed(byte errorCode) { OnConnectFailed?.Invoke(errorCode); }
+
+        private static void ExecOnReconnectPlayer (ushort playerId, ulong uniqueId) { OnReconnectPlayer?.Invoke (playerId, uniqueId); }
 
 		private static void ExecOnDisconnectPlayer (ushort playerId, ulong uniqueId) { OnDisconnectPlayer?.Invoke (playerId, uniqueId); }
 

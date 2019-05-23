@@ -378,11 +378,19 @@ namespace ICKX.Radome
                     if (IsStopRequest)
                     {
                         StopComplete();
+                        ExecOnDisconnectAll(0);
                     }
                     else
                     {
-                        DisconnectPlayerId(MyPlayerInfo.UniqueId);
-                        //Reconnect();
+                        if (NetwrokState == NetworkConnection.State.Connecting)
+                        {
+                            ExecOnConnectFailed(1); //TODO ErrorCodeを取得する方法を探す
+                        }
+                        else
+                        {
+                            DisconnectPlayerId(MyPlayerInfo.UniqueId);
+                            ExecOnDisconnectAll(1);    //TODO ErrorCodeを取得する方法を探す
+                        }
                     }
                     return;
                 }
@@ -465,7 +473,9 @@ namespace ICKX.Radome
                     RegisterPlayerId(serverPlayerInfo);
                     //自分を登録
                     RegisterPlayerId(MyPlayerInfo as PlayerInfo);
-                    
+
+                    ExecOnConnect();
+
                     //recconect
                     if (isRecconnect)
                     {

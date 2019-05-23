@@ -68,7 +68,7 @@ namespace ICKX.Radome
         public const int TimeOutFrameCount = 300;
         public const int HeaderSize = 1 + 2 + 2 + 2 + 2;
     }
-
+    
     /// <summary>
     /// NetworkManagerの基底クラス
     /// 
@@ -89,6 +89,10 @@ namespace ICKX.Radome
                 this.DisconnectTime = 0.0f;
             }
         }
+
+        public delegate void OnConnectEvent();
+        public delegate void OnDisconnectAllEvent(byte errorCode);
+        public delegate void OnConnectFailedEvent(byte errorCode);
 
         public delegate void OnReconnectPlayerEvent(ushort playerId, ulong uniqueId);
         public delegate void OnDisconnectPlayerEvent(ushort playerId, ulong uniqueId);
@@ -120,6 +124,9 @@ namespace ICKX.Radome
         public JobHandle JobHandle { get; protected set; }
 
         //public event System.Action OnConnectionFailed = null;
+        public event OnConnectEvent OnConnect = null;
+        public event OnDisconnectAllEvent OnDisconnectAll = null;
+        public event OnConnectFailedEvent OnConnectFailed = null;
         public event OnReconnectPlayerEvent OnReconnectPlayer = null;
         public event OnDisconnectPlayerEvent OnDisconnectPlayer = null;
         public event OnRegisterPlayerEvent OnRegisterPlayer = null;
@@ -259,6 +266,21 @@ namespace ICKX.Radome
             {
                 _ActivePlayerIdList[index] = (byte)(_ActivePlayerIdList[index] & ~bit);
             }
+        }
+
+        protected void ExecOnConnect()
+        {
+            OnConnect?.Invoke();
+        }
+
+        protected void ExecOnDisconnectAll(byte errorCode)
+        {
+            OnDisconnectAll?.Invoke(errorCode);
+        }
+
+        protected void ExecOnConnectFailed(byte errorCode)
+        {
+            OnConnectFailed?.Invoke(errorCode);
         }
 
         protected void ExecOnReconnectPlayer(ushort playerId, ulong uniqueId)
