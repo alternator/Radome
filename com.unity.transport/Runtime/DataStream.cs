@@ -332,11 +332,12 @@ namespace Unity.Networking.Transport
             unsafe
             {
                 byte* test_b = (byte*)&test;
-                IsLittleEndian = test_b[0] == 1;
+                _IsLittleEndian = test_b[0];
             }
         }
 
-        private bool IsLittleEndian;
+        private byte _IsLittleEndian;
+        public bool IsLittleEndian => _IsLittleEndian == 1;
 
         private static short ByteSwap(short val)
         {
@@ -810,7 +811,7 @@ namespace Unity.Networking.Transport
             unsafe
             {
                 byte* test_b = (byte*)&test;
-                IsLittleEndian = test_b[0] == 1;
+                _IsLittleEndian = test_b[0];
             }
         }
 
@@ -830,7 +831,7 @@ namespace Unity.Networking.Transport
             unsafe
             {
                 byte* test_b = (byte*)&test;
-                IsLittleEndian = test_b[0] == 1;
+                _IsLittleEndian = test_b[0];
             }
         }
 
@@ -848,12 +849,13 @@ namespace Unity.Networking.Transport
             unsafe
             {
                 byte* test_b = (byte*)&test;
-                IsLittleEndian = test_b[0] == 1;
+                _IsLittleEndian = test_b[0];
             }
         }
 
-        private bool IsLittleEndian;
-
+        private byte _IsLittleEndian;
+        public bool IsLittleEndian => _IsLittleEndian == 1;
+        
         private static short ByteSwap(short val)
         {
             return (short)(((val & 0xff) << 8) | ((val >> 8) & 0xff));
