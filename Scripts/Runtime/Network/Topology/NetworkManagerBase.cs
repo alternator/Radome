@@ -62,6 +62,7 @@ namespace ICKX.Radome
 
     public static class NetworkLinkerConstants
     {
+        public const int MaxPacketSize = NetworkParameterConstants.MTU * 4 / 5;
         public const ushort BroadcastId = ushort.MaxValue;
         public const ushort MulticastId = ushort.MaxValue - 1;
 

@@ -196,7 +196,10 @@ namespace ICKX.Radome
         /// </summary>
         public override void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false)
         {
-            //Debug.Log($"Brodcast Len={data.Length} qos={qos}");
+            //if(qos == QosType.Reliable)
+            //{
+            //    Debug.Log($"Brodcast Len={data.Length} qos={qos}");
+            //}
             if (NetwrokState == NetworkConnection.State.Disconnected)
             {
                 Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");

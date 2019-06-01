@@ -47,7 +47,8 @@ namespace ICKX.Radome
             {
                 NetworkDriver = new UdpNetworkDriver(new INetworkParameter[] {
                     Config,
-                    new ReliableUtility.Parameters { WindowSize = 32 },
+                    new ReliableUtility.Parameters { WindowSize = 128 },
+                    new NetworkPipelineParams {initialCapacity = ushort.MaxValue},
                     //new SimulatorUtility.Parameters {MaxPacketSize = 256, MaxPacketCount = 32, PacketDelayMs = 100},
                 });
             }
@@ -140,9 +141,9 @@ namespace ICKX.Radome
 
         protected void Start()
         {
+            Debug.Log("start " + SystemInfo.deviceUniqueIdentifier);
             LeaderStatTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             NetwrokState = NetworkConnection.State.Connecting;
-
             _ActiveConnectionInfoList.Add(new SCConnectionInfo(NetworkConnection.State.Connecting));
             MyPlayerInfo.PlayerId = ServerPlayerId;
             RegisterPlayerId(MyPlayerInfo as PlayerInfo, default);
@@ -332,7 +333,7 @@ namespace ICKX.Radome
 
         protected void SendUpdateAllPlayerPacket(ushort targetPlayerId)
         {
-            var packet = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Temp);
+            var packet = new DataStreamWriter(NetworkLinkerConstants.MaxPacketSize, Allocator.Temp);
 
             packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
             for (ushort i = 1; i < _ActivePlayerInfoList.Count; i++)
@@ -351,7 +352,7 @@ namespace ICKX.Radome
                     playerInfo.AppendPlayerInfoPacket(ref packet);
                 }
 
-                if (packet.Length > NetworkParameterConstants.MTU - playerInfo.PacketSize - 1)
+                if (packet.Length > NetworkLinkerConstants.MaxPacketSize - playerInfo.PacketSize - 1)
                 {
                     Send(targetPlayerId, packet, QosType.Reliable);
                     packet.Clear();

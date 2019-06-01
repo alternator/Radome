@@ -125,21 +125,28 @@ namespace ICKX.Radome {
 
 				Transporter transporter;
 				if(isCancel) {
-					transporter = _recieveTransporterTable[hash];
-					_recieveTransporterTable.Remove (hash);
-					ExecOnRecieveComplete(transporter, false);
-				}else if (isStart) {
+                    if (_recieveTransporterTable.TryGetValue(hash, out transporter))
+                    {
+                        _recieveTransporterTable.Remove(hash);
+                        ExecOnRecieveComplete(transporter, false);
+                    }
+                }
+                else if (isStart) {
 					transporter = RecieveStart (hash, stream, ref ctx);
 					transporter.hash = hash;
 					_recieveTransporterTable[hash] = transporter;
 					OnRecieveStart?.Invoke (transporter);
-				} else {
-					transporter = _recieveTransporterTable[hash];
-					RecieveFragmentData (hash, stream, ref ctx, transporter);
-					if (isComplete) {
-						_recieveTransporterTable.Remove (hash);
-						RecieveComplete (hash, transporter);
-					}
+				} else
+                {
+                    if (_recieveTransporterTable.TryGetValue(hash, out transporter))
+                    {
+                        RecieveFragmentData(hash, stream, ref ctx, transporter);
+                        if (isComplete)
+                        {
+                            _recieveTransporterTable.Remove(hash);
+                            RecieveComplete(hash, transporter);
+                        }
+                    }
 				}
 			}
 		}

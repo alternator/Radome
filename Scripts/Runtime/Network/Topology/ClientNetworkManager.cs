@@ -44,7 +44,8 @@ namespace ICKX.Radome
             {
                 NetworkDriver = new UdpNetworkDriver(new INetworkParameter[] {
                     Config,
-                    new ReliableUtility.Parameters { WindowSize = 32 },
+                    new ReliableUtility.Parameters { WindowSize = 128 },
+                    new NetworkPipelineParams {initialCapacity = ushort.MaxValue},
                     //new SimulatorUtility.Parameters {MaxPacketSize = 256, MaxPacketCount = 32, PacketDelayMs = 100},
                 });
             }
@@ -66,12 +67,17 @@ namespace ICKX.Radome
 
         protected override void Reconnect()
         {
-            if(NetwrokState == NetworkConnection.State.Disconnected)
+            Debug.Log("Reconnect" + NetwrokState + " : " + serverAdress + ":" + serverPort);
+
+            if (NetwrokState != NetworkConnection.State.Connected)
             {
                 var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
                 NetwrokState = NetworkConnection.State.Connecting;
 
                 ServerConnection = NetworkDriver.Connect(endpoint);
+
+                while (ServerPlayerId >= _ActiveConnectionInfoList.Count) _ActiveConnectionInfoList.Add(null);
+                _ActiveConnectionInfoList[ServerPlayerId] = new SCConnectionInfo(NetworkConnection.State.Connecting);
 
                 Debug.Log("Reconnect");
             }
@@ -92,6 +98,7 @@ namespace ICKX.Radome
     {
         public override bool IsFullMesh => false;
 
+        public bool AutoRecconect { get; set; } = true;
         public NetworkConnection ServerConnection { get; protected set; }
         
         public ClientNetworkManager(PlayerInfo playerInfo) : base(playerInfo)
@@ -385,12 +392,15 @@ namespace ICKX.Radome
                         if (NetwrokState == NetworkConnection.State.Connecting)
                         {
                             ExecOnConnectFailed(1); //TODO ErrorCodeを取得する方法を探す
+                            NetwrokState = NetworkConnection.State.Disconnected;
                         }
                         else
                         {
                             DisconnectPlayerId(MyPlayerInfo.UniqueId);
                             ExecOnDisconnectAll(1);    //TODO ErrorCodeを取得する方法を探す
+                            NetwrokState = NetworkConnection.State.AwaitingResponse;
                         }
+                        Reconnect();
                     }
                     return;
                 }
@@ -584,12 +594,18 @@ namespace ICKX.Radome
                 packet.Write((byte)BuiltInPacket.Type.MeasureRtt);
                 packet.Write(GamePacketManager.currentUnixTime);
 
+                //ServerConnection.Send(NetworkDriver, _QosPipelines[(byte)QosType.Reliable], packet);
                 Send(ServerPlayerId, packet, QosType.Unreliable);
             }
         }
 
         protected JobHandle ScheduleSendPacket(JobHandle jobHandle)
         {
+            if (ServerConnection.GetState(NetworkDriver) != NetworkConnection.State.Connected)
+            {
+                return default;
+            }
+
             var sendPacketsJob = new SendPacketaJob()
             {
                 driver = NetworkDriver,
