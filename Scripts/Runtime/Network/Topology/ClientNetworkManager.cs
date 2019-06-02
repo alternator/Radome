@@ -497,47 +497,48 @@ namespace ICKX.Radome
                     break;
                 case (byte)BuiltInPacket.Type.UpdatePlayerInfo:
                     {
-                        var state = (NetworkConnection.State)chunk.ReadByte(ref ctx2);
-                        var updatePlayerInfo = new PlayerInfo();
-                        updatePlayerInfo.Deserialize(ref chunk, ref ctx2);
-                        Debug.Log("UpdatePlayerInfo : " + state + " : " + updatePlayerInfo.PlayerId);
-                        if (updatePlayerInfo.PlayerId == MyPlayerId)
+                        while (ctx2.GetReadByteIndex() + 2 < chunk.Length)
                         {
-                            break;
-                        }
-
-                        var connInfo = GetConnectionInfo(updatePlayerInfo.PlayerId);
-                        switch (state)
-                        {
-                            case NetworkConnection.State.Connected:
-                                if(connInfo != null && connInfo.State == NetworkConnection.State.AwaitingResponse)
+                            var state = (NetworkConnection.State)chunk.ReadByte(ref ctx2);
+                            var updatePlayerInfo = new PlayerInfo();
+                            updatePlayerInfo.Deserialize(ref chunk, ref ctx2);
+                            Debug.Log("UpdatePlayerInfo : " + state + " : " + updatePlayerInfo.PlayerId);
+                            if (updatePlayerInfo.PlayerId != MyPlayerId)
+                            {
+                                var connInfo = GetConnectionInfo(updatePlayerInfo.PlayerId);
+                                switch (state)
                                 {
-                                    Debug.Log("ReconnectPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
-                                    ReconnectPlayerId(updatePlayerInfo.UniqueId);
+                                    case NetworkConnection.State.Connected:
+                                        if (connInfo != null && connInfo.State == NetworkConnection.State.AwaitingResponse)
+                                        {
+                                            Debug.Log("ReconnectPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
+                                            ReconnectPlayerId(updatePlayerInfo.UniqueId);
+                                        }
+                                        else if (!(connInfo != null && connInfo.State == NetworkConnection.State.Connected))
+                                        {
+                                            Debug.Log("RegisterPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
+                                            RegisterPlayerId(updatePlayerInfo);
+                                        }
+                                        break;
+                                    case NetworkConnection.State.Disconnected:
+                                        if (connInfo != null && connInfo.State != NetworkConnection.State.Disconnected)
+                                        {
+                                            Debug.Log("UnregisterPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
+                                            if (GetUniqueId(updatePlayerInfo.PlayerId, out ulong uniqueId))
+                                            {
+                                                UnregisterPlayerId(uniqueId);
+                                            }
+                                        }
+                                        break;
+                                    case NetworkConnection.State.AwaitingResponse:
+                                        if (connInfo != null && connInfo.State != NetworkConnection.State.AwaitingResponse)
+                                        {
+                                            Debug.Log("DisconnectPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
+                                            DisconnectPlayerId(updatePlayerInfo.UniqueId);
+                                        }
+                                        break;
                                 }
-                                else if (!(connInfo != null && connInfo.State == NetworkConnection.State.Connected))
-                                {
-                                    Debug.Log("RegisterPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
-                                    RegisterPlayerId(updatePlayerInfo);
-                                }
-                                break;
-                            case NetworkConnection.State.Disconnected:
-                                if (connInfo != null && connInfo.State != NetworkConnection.State.Disconnected)
-                                {
-                                    Debug.Log("UnregisterPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
-                                    if(GetUniqueId(updatePlayerInfo.PlayerId, out ulong uniqueId))
-                                    {
-                                        UnregisterPlayerId(uniqueId);
-                                    }
-                                }
-                                break;
-                            case NetworkConnection.State.AwaitingResponse:
-                                if (connInfo != null && connInfo.State != NetworkConnection.State.AwaitingResponse)
-                                {
-                                    Debug.Log("DisconnectPlayerId : " + state + " : " + updatePlayerInfo.PlayerId);
-                                    DisconnectPlayerId(updatePlayerInfo.UniqueId);
-                                }
-                                break;
+                            }
                         }
                     }
                     break;
