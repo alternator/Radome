@@ -101,7 +101,7 @@ namespace ICKX.Radome
         public delegate void OnUnregisterPlayerEvent(ushort playerId, ulong uniqueId);
         public delegate void OnRecievePacketEvent(ushort senderPlayerId, ulong uniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx);
 
-        public const ushort ServerPlayerId = 0;
+        public ushort ServerPlayerId { get; protected set; } = 0;
 
         protected List<byte> _ActivePlayerIdList = new List<byte>(16);
         
@@ -112,12 +112,12 @@ namespace ICKX.Radome
         protected Dictionary<ulong, ushort> _UniquePlayerIdTable = new Dictionary<ulong, ushort>();
         public IReadOnlyDictionary<ulong, ushort> UniquePlayerIdTable { get { return _UniquePlayerIdTable; } }
 
-        public NetworkConnection.State NetwrokState { get; protected set; } = NetworkConnection.State.Disconnected;
+        public NetworkConnection.State NetworkState { get; protected set; } = NetworkConnection.State.Disconnected;
 
         public DefaultPlayerInfo MyPlayerInfo { get; protected set; }
 
         public ushort MyPlayerId { get { return MyPlayerInfo.PlayerId; } }
-        public bool IsLeader { get { return MyPlayerId == 0; } }
+        public bool IsLeader { get; protected set; }
         public bool IsStopRequest { get; protected set; }
 
         public long LeaderStatTime { get; protected set; }
@@ -156,9 +156,9 @@ namespace ICKX.Radome
 
         public virtual void Stop()
         {
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -166,9 +166,9 @@ namespace ICKX.Radome
 
         protected virtual void StopComplete()
         {
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -320,10 +320,143 @@ namespace ICKX.Radome
         public abstract void OnFirstUpdate();
         public abstract void OnLastUpdate();
 
-        public abstract void Send(ushort targetPlayerId, DataStreamWriter data, QosType qos);
-        public abstract void Send(ulong targetUniqueId, DataStreamWriter data, QosType qos);
-        public abstract void Multicast(NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos);
-        public abstract void Multicast(NativeList<ulong> uniqueIdList, DataStreamWriter data, QosType qos);
-        public abstract void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false);
+        protected virtual unsafe void SendSingle(ushort targetPlayerId, DataStreamWriter data, QosType qos)
+        {
+            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+
+            if (_SinglePacketBuffer.Length + data.Length + 5 >= _SinglePacketBuffer.Capacity)
+            {
+                _SinglePacketBuffer.Capacity *= 2;
+            }
+            _SinglePacketBuffer.Write((byte)qos);
+            _SinglePacketBuffer.Write(targetPlayerId);
+            _SinglePacketBuffer.Write((ushort)data.Length);
+            _SinglePacketBuffer.WriteBytes(dataPtr, data.Length);
+        }
+
+        public virtual void Send(ulong targetUniqueId, DataStreamWriter data, QosType qos)
+        {
+            if (_UniquePlayerIdTable.TryGetValue(targetUniqueId, out var playerId))
+            {
+                Send(playerId, data, qos);
+            }
+        }
+
+        /// <summary>
+        /// Player1人にパケットを送信
+        /// </summary>
+        public virtual void Send(ushort targetPlayerId, DataStreamWriter data, QosType qos)
+        {
+            //Debug.Log($"Sennd {targetPlayerId} Len={data.Length} qos={qos}");
+            if (NetworkState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
+                return;
+            }
+
+            SendSingle(targetPlayerId, data, qos);
+        }
+
+        /// <summary>
+        /// 複数のPlayerにパケットを送信
+        /// </summary>
+        public virtual unsafe void Multicast(NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos)
+        {
+            //Debug.Log($"Sennd {playerIdList.Length} Len={data.Length} qos={qos}");
+            if (NetworkState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
+                return;
+            }
+            if (_SinglePacketBuffer.Length + data.Length + 7 + 2 * playerIdList.Length >= _SinglePacketBuffer.Capacity)
+            {
+                _SinglePacketBuffer.Capacity *= 2;
+            }
+
+            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+            ushort dataLength = (ushort)data.Length;
+
+            _SinglePacketBuffer.Write((byte)qos);
+            _SinglePacketBuffer.Write(NetworkLinkerConstants.MulticastId);
+
+            _SinglePacketBuffer.Write((ushort)playerIdList.Length);
+            for (int i = 0; i < playerIdList.Length; i++)
+            {
+                _SinglePacketBuffer.Write(playerIdList[i]);
+            }
+            _SinglePacketBuffer.Write((ushort)data.Length);
+            _SinglePacketBuffer.WriteBytes(dataPtr, data.Length);
+        }
+
+        /// <summary>
+        /// 複数のPlayerにパケットを送信
+        /// </summary>
+        public virtual unsafe void Multicast(NativeList<ulong> uniqueIdList, DataStreamWriter data, QosType qos)
+        {
+            //Debug.Log($"Multicast {uniqueIdList.Length} Len={data.Length} qos={qos}");
+            if (NetworkState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
+                return;
+            }
+            if (_SinglePacketBuffer.Length + data.Length + 7 + 2 * uniqueIdList.Length >= _SinglePacketBuffer.Capacity)
+            {
+                _SinglePacketBuffer.Capacity *= 2;
+            }
+
+            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+            ushort dataLength = (ushort)data.Length;
+
+            _SinglePacketBuffer.Write((byte)qos);
+            _SinglePacketBuffer.Write(NetworkLinkerConstants.MulticastId);
+
+            _SinglePacketBuffer.Write((ushort)uniqueIdList.Length);
+            for (int i = 0; i < uniqueIdList.Length; i++)
+            {
+                if (UniquePlayerIdTable.TryGetValue(uniqueIdList[i], out ushort playerId))
+                {
+                    _SinglePacketBuffer.Write(playerId);
+                }
+            }
+            _SinglePacketBuffer.Write((ushort)data.Length);
+            _SinglePacketBuffer.WriteBytes(dataPtr, dataLength);
+        }
+
+        /// <summary>
+        /// 全Playerにパケットを送信
+        /// </summary>
+        public virtual void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false)
+        {
+            //if(qos == QosType.Reliable)
+            //{
+            //    Debug.Log($"Brodcast Len={data.Length} qos={qos}");
+            //}
+            if (NetworkState == NetworkConnection.State.Disconnected)
+            {
+                Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
+                return;
+            }
+
+            if (noChunk)
+            {
+                SendSingle(NetworkLinkerConstants.BroadcastId, data, qos);
+            }
+            else
+            {
+                if (qos == QosType.Unreliable)
+                {
+                    _BroadcastUdpChunkedPacketManager.AddChunk(data);
+                }
+                if (qos == QosType.Reliable)
+                {
+                    _BroadcastRudpChunkedPacketManager.AddChunk(data);
+                }
+            }
+        }
+        //public abstract void Send(ushort targetPlayerId, DataStreamWriter data, QosType qos);
+        //public abstract void Send(ulong targetUniqueId, DataStreamWriter data, QosType qos);
+        //public abstract void Multicast(NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos);
+        //public abstract void Multicast(NativeList<ulong> uniqueIdList, DataStreamWriter data, QosType qos);
+        //public abstract void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false);
     }
 }

@@ -67,12 +67,12 @@ namespace ICKX.Radome
 
         protected override void Reconnect()
         {
-            Debug.Log("Reconnect" + NetwrokState + " : " + serverAdress + ":" + serverPort);
+            Debug.Log("Reconnect" + NetworkState + " : " + serverAdress + ":" + serverPort);
 
-            if (NetwrokState != NetworkConnection.State.Connected)
+            if (NetworkState != NetworkConnection.State.Connected)
             {
                 var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
-                NetwrokState = NetworkConnection.State.Connecting;
+                NetworkState = NetworkConnection.State.Connecting;
 
                 ServerConnection = NetworkDriver.Connect(endpoint);
 
@@ -109,7 +109,7 @@ namespace ICKX.Radome
         {
             if (_IsDispose) return;
 
-            if (NetwrokState != NetworkConnection.State.Disconnected)
+            if (NetworkState != NetworkConnection.State.Disconnected)
             {
                 StopComplete();
             }
@@ -121,7 +121,8 @@ namespace ICKX.Radome
 
         protected void Start()
         {
-            NetwrokState = NetworkConnection.State.Connecting;
+            IsLeader = false;
+            NetworkState = NetworkConnection.State.Connecting;
         }
 
         //再接続
@@ -133,9 +134,9 @@ namespace ICKX.Radome
         public override void Stop()
         {
             base.Stop();
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -153,7 +154,7 @@ namespace ICKX.Radome
         // サーバーから切断されたらLinkerを破棄して停止
         protected override void StopComplete()
         {
-            if (NetwrokState != NetworkConnection.State.Disconnected)
+            if (NetworkState != NetworkConnection.State.Disconnected)
             {
                 foreach (var pair in _UniquePlayerIdTable)
                 {
@@ -161,9 +162,9 @@ namespace ICKX.Radome
                 }
             }
             base.StopComplete();
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -173,7 +174,7 @@ namespace ICKX.Radome
                 ServerConnection.Disconnect(NetworkDriver);
             }
 
-            NetwrokState = NetworkConnection.State.Disconnected;
+            NetworkState = NetworkConnection.State.Disconnected;
         }
 
         public override DefaultConnectionInfo GetConnectionInfo(ushort playerId)
@@ -345,7 +346,7 @@ namespace ICKX.Radome
             {
                 return;
             }
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
                 return;
             }
@@ -367,7 +368,7 @@ namespace ICKX.Radome
                     //Serverと接続完了
                     ServerConnection = con;
 
-                    if (NetwrokState == NetworkConnection.State.AwaitingResponse)
+                    if (NetworkState == NetworkConnection.State.AwaitingResponse)
                     {
                         //再接続
                         //サーバーに自分のPlayerInfoを教える
@@ -389,16 +390,16 @@ namespace ICKX.Radome
                     }
                     else
                     {
-                        if (NetwrokState == NetworkConnection.State.Connecting)
+                        if (NetworkState == NetworkConnection.State.Connecting)
                         {
                             ExecOnConnectFailed(1); //TODO ErrorCodeを取得する方法を探す
-                            NetwrokState = NetworkConnection.State.Disconnected;
+                            NetworkState = NetworkConnection.State.Disconnected;
                         }
                         else
                         {
                             DisconnectPlayerId(MyPlayerInfo.UniqueId);
                             ExecOnDisconnectAll(1);    //TODO ErrorCodeを取得する方法を探す
-                            NetwrokState = NetworkConnection.State.AwaitingResponse;
+                            NetworkState = NetworkConnection.State.AwaitingResponse;
                         }
                         Reconnect();
                     }
@@ -452,7 +453,7 @@ namespace ICKX.Radome
             switch (type)
             {
                 case (byte)BuiltInPacket.Type.RegisterPlayer:
-                    NetwrokState = NetworkConnection.State.Connected;
+                    NetworkState = NetworkConnection.State.Connected;
                     MyPlayerInfo.PlayerId = chunk.ReadUShort(ref ctx2);
 
                     LeaderStatTime = chunk.ReadLong(ref ctx2);
@@ -560,7 +561,7 @@ namespace ICKX.Radome
         /// </summary>
         public override void OnLastUpdate()
         {
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
                 return;
             }
@@ -570,7 +571,7 @@ namespace ICKX.Radome
             }
             if (!_IsFirstUpdateComplete) return;
 
-            if (NetwrokState == NetworkConnection.State.Connected || NetwrokState == NetworkConnection.State.AwaitingResponse)
+            if (NetworkState == NetworkConnection.State.Connected || NetworkState == NetworkConnection.State.AwaitingResponse)
             {
                 if (Time.realtimeSinceStartup - _PrevSendTime > 1.0)
                 {
@@ -640,6 +641,7 @@ namespace ICKX.Radome
 
             public unsafe void Execute()
             {
+                var multiCastList = new NativeList<ushort>(Allocator.Temp);
                 var temp = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Temp);
 
                 if (singlePacketBuffer.Length != 0)
@@ -655,6 +657,17 @@ namespace ICKX.Radome
 
                         byte qos = reader.ReadByte(ref ctx);
                         ushort targetPlayerId = reader.ReadUShort(ref ctx);
+
+                        if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+                        {
+                            multiCastList.Clear();
+                            ushort multiCastCount = reader.ReadUShort(ref ctx);
+                            for (int i = 0; i < multiCastCount; i++)
+                            {
+                                multiCastList.Add(reader.ReadUShort(ref ctx));
+                            }
+                        }
+
                         ushort packetDataLen = reader.ReadUShort(ref ctx);
                         if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
 
@@ -730,6 +743,7 @@ namespace ICKX.Radome
                     }
                 }
                 temp.Dispose();
+                multiCastList.Dispose();
             }
         }
     }

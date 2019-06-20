@@ -37,9 +37,9 @@ namespace ICKX.Radome
         /// </summary>
         public void Start(int port)
         {
-            if (NetwrokState != NetworkConnection.State.Disconnected)
+            if (NetworkState != NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
 
@@ -123,7 +123,7 @@ namespace ICKX.Radome
         {
             if (_IsDispose) return;
 
-            if (NetwrokState != NetworkConnection.State.Disconnected)
+            if (NetworkState != NetworkConnection.State.Disconnected)
             {
                 StopComplete();
             }
@@ -141,9 +141,10 @@ namespace ICKX.Radome
 
         protected void Start()
         {
+            IsLeader = true;
             Debug.Log("start " + SystemInfo.deviceUniqueIdentifier);
             LeaderStatTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            NetwrokState = NetworkConnection.State.Connecting;
+            NetworkState = NetworkConnection.State.Connecting;
             _ActiveConnectionInfoList.Add(new SCConnectionInfo(NetworkConnection.State.Connecting));
             MyPlayerInfo.PlayerId = ServerPlayerId;
             RegisterPlayerId(MyPlayerInfo as PlayerInfo, default);
@@ -155,9 +156,9 @@ namespace ICKX.Radome
         public override void Stop()
         {
             base.Stop();
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("Start Failed  currentState = " + NetwrokState);
+                Debug.LogError("Start Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -177,7 +178,7 @@ namespace ICKX.Radome
         // すべてのClientが切断したら呼ぶ
         protected override void StopComplete()
         {
-            if (NetwrokState != NetworkConnection.State.Disconnected)
+            if (NetworkState != NetworkConnection.State.Disconnected)
             {
                 foreach (var pair in _UniquePlayerIdTable)
                 {
@@ -185,9 +186,9 @@ namespace ICKX.Radome
                 }
             }
             base.StopComplete();
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
-                Debug.LogError("CompleteStop Failed  currentState = " + NetwrokState);
+                Debug.LogError("CompleteStop Failed  currentState = " + NetworkState);
                 return;
             }
             JobHandle.Complete();
@@ -199,7 +200,7 @@ namespace ICKX.Radome
             _RelayWriter.Clear();
             _RecieveDataStream.Clear();
 
-            NetwrokState = NetworkConnection.State.Disconnected;
+            NetworkState = NetworkConnection.State.Disconnected;
         }
 
         public override DefaultConnectionInfo GetConnectionInfo(ushort playerId)
@@ -336,8 +337,10 @@ namespace ICKX.Radome
             var packet = new DataStreamWriter(NetworkLinkerConstants.MaxPacketSize, Allocator.Temp);
 
             packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
-            for (ushort i = 1; i < _ActivePlayerInfoList.Count; i++)
+            for (ushort i = 0; i < _ActivePlayerInfoList.Count; i++)
             {
+                if (i == ServerPlayerId) continue;
+
                 var connInfo = _ActiveConnectionInfoList[i];
                 var playerInfo = _ActivePlayerInfoList[i];
                 if (connInfo != null && playerInfo != null && connInfo.State != NetworkConnection.State.Connecting)
@@ -429,7 +432,7 @@ namespace ICKX.Radome
         /// </summary>
         public override void OnFirstUpdate()
         {
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
                 return;
             }
@@ -548,7 +551,7 @@ namespace ICKX.Radome
 
                             SendUpdateAllPlayerPacket(newPlayerId);
 
-                            NetwrokState = NetworkConnection.State.Connected;
+                            NetworkState = NetworkConnection.State.Connected;
                         }
                     }
                     break;
@@ -620,7 +623,7 @@ namespace ICKX.Radome
         /// </summary>
         public override void OnLastUpdate()
         {
-            if (NetwrokState == NetworkConnection.State.Disconnected)
+            if (NetworkState == NetworkConnection.State.Disconnected)
             {
                 return;
             }
@@ -628,7 +631,7 @@ namespace ICKX.Radome
             if (!_IsFirstUpdateComplete) return;
 
             //main thread処理
-            if (NetwrokState == NetworkConnection.State.Connected || NetwrokState == NetworkConnection.State.AwaitingResponse)
+            if (NetworkState == NetworkConnection.State.Connected || NetworkState == NetworkConnection.State.AwaitingResponse)
             {
                 if(Time.realtimeSinceStartup - _PrevSendTime > 1.0)
                 {
@@ -669,6 +672,7 @@ namespace ICKX.Radome
                 rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBuffer,
                 udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBuffer,
                 qosPipelines = _QosPipelines,
+                serverPlayerId = ServerPlayerId,
             };
 
             return sendPacketsJob.Schedule(jobHandle);
@@ -685,6 +689,7 @@ namespace ICKX.Radome
                 disconnectConnIdList = _DisconnectConnIdList,
                 relayWriter = _RelayWriter,
                 dataStream = _RecieveDataStream,
+                serverPlayerId = ServerPlayerId,
             };
             return recievePacketJob.Schedule(jobHandle);
         }
@@ -702,7 +707,11 @@ namespace ICKX.Radome
             [ReadOnly]
             public DataStreamWriter udpPacketBuffer;
 
+            [ReadOnly]
             public NativeArray<NetworkPipeline> qosPipelines;
+
+            [ReadOnly]
+            public ushort serverPlayerId;
 
             public unsafe void Execute()
             {
@@ -741,14 +750,16 @@ namespace ICKX.Radome
 
                         temp.Write(qos);
                         temp.Write(targetPlayerId);
-                        temp.Write(ServerPlayerId);
+                        temp.Write(serverPlayerId);
                         temp.Write(packetDataLen);
                         temp.WriteBytes(packetPtr, packetDataLen);
 
                         if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
                         {
-                            for (ushort i = 1; i < connections.Length; i++)
+                            for (ushort i = 0; i < connections.Length; i++)
                             {
+                                if (i == serverPlayerId) continue;
+
                                 if (connections[i] != default)
                                 {
                                     connections[i].Send(driver, qosPipelines[qos], temp);
@@ -796,12 +807,14 @@ namespace ICKX.Radome
                         //chunkはBroadcast + Unrealiableのみ
                         temp.Write((byte)QosType.Unreliable);
                         temp.Write(NetworkLinkerConstants.BroadcastId);
-                        temp.Write(ServerPlayerId);
+                        temp.Write(serverPlayerId);
                         //temp.Write(packetDataLen);
                         temp.WriteBytes(packetPtr, packetDataLen);
 
-                        for (ushort i = 1; i < connections.Length; i++)
+                        for (ushort i = 0; i < connections.Length; i++)
                         {
+                            if (i == serverPlayerId) continue;
+
                             if (connections[i] != default)
                             {
                                 connections[i].Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
@@ -831,12 +844,14 @@ namespace ICKX.Radome
                         //chunkはBroadcast + Unrealiableのみ
                         temp.Write((byte)QosType.Reliable);
                         temp.Write(NetworkLinkerConstants.BroadcastId);
-                        temp.Write(ServerPlayerId);
+                        temp.Write(serverPlayerId);
                         //temp.Write(packetDataLen);
                         temp.WriteBytes(packetPtr, packetDataLen);
 
-                        for (ushort i = 1; i < connections.Length; i++)
+                        for (ushort i = 0; i < connections.Length; i++)
                         {
+                            if (i == serverPlayerId) continue;
+
                             if (connections[i] != default)
                             {
                                 connections[i].Send(driver, qosPipelines[(byte)QosType.Reliable], temp);
@@ -847,6 +862,7 @@ namespace ICKX.Radome
                     }
                 }
                 temp.Dispose();
+                multiCastList.Dispose();
             }
         }
 
@@ -855,6 +871,7 @@ namespace ICKX.Radome
             public Driver driver;
             [ReadOnly]
             public NativeArray<NetworkConnection> connections;
+            [ReadOnly]
             public NativeArray<NetworkPipeline> qosPipelines;
 
             public NativeList<int> connectConnIdList;
@@ -862,6 +879,8 @@ namespace ICKX.Radome
             public DataStreamWriter relayWriter;
             //public NativeMultiHashMap<int, DataStreamReader> dataStream;
             public NativeList<DataPacket> dataStream;
+            [ReadOnly]
+            public ushort serverPlayerId;
 
             public unsafe void Execute()
             {
@@ -913,8 +932,9 @@ namespace ICKX.Radome
 
                         if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
                         {
-                            for (ushort i = 1; i < connections.Length; i++)
+                            for (ushort i = 0; i < connections.Length; i++)
                             {
+                                if (i == serverPlayerId) continue;
                                 if (connections[i] != default && senderPlayerId != i)
                                 {
                                     RelayPacket(i, stream, qos);
@@ -926,7 +946,7 @@ namespace ICKX.Radome
                         {
                             for (int i = 0; i < multiCastList.Length; i++)
                             {
-                                if (multiCastList[i] == ServerPlayerId)
+                                if (multiCastList[i] == serverPlayerId)
                                 {
                                     PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
                                 }
@@ -941,7 +961,7 @@ namespace ICKX.Radome
                         }
                         else
                         {
-                            if (targetPlayerId == ServerPlayerId)
+                            if (targetPlayerId == serverPlayerId)
                             {
                                 PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
                             }

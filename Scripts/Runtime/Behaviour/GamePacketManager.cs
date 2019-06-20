@@ -168,17 +168,17 @@ namespace ICKX.Radome {
 		}
 
 		public static void Send (ushort playerId, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Send (playerId, data, qos);
 		}
 
 		public static void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Multicast (playerIdList, data, qos);
 		}
 
 		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Broadcast (data, qos, noChunk);
 		}
 
