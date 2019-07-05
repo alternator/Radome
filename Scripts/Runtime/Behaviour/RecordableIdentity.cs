@@ -54,34 +54,49 @@ namespace ICKX.Radome {
         public Transform CacheTransform { get; private set; }
         public RecordableTransform CacheRecordableTransform { get; private set; }
 
-        private List<RecordableBehaviour> m_recordableBehaviourList;
+        private List<IRecordableComponent> m_recordableComponentList;
 
-        internal void RegisterTransform (RecordableTransform trans) {
+		private bool _IsInit = false;
+
+		internal void RegisterTransform (RecordableTransform trans) {
             CacheRecordableTransform = trans;
         }
 
 		private void Awake () {
-            CacheTransform = transform;
+			Initialize();
+        }
 
-            var behaviours = GetComponents<RecordableBehaviour> ();
-            m_recordableBehaviourList = new List<RecordableBehaviour>(behaviours.Length);
-            foreach (var component in behaviours) {
-                while (component.componentIndex >= m_recordableBehaviourList.Count) {
-                    m_recordableBehaviourList.Add (null);
-                }
-                m_recordableBehaviourList[component.componentIndex] = component;
-            }
+		public void Initialize()
+		{
+			if (_IsInit) return;
+			_IsInit = true;
+			CacheTransform = transform;
 
-            if(netId != 0) {
-                if(GamePacketManager.PlayerId != 0) {
+			var behaviours = GetComponents<IRecordableComponent>();
+			m_recordableComponentList = new List<IRecordableComponent>(behaviours.Length);
+			foreach (var component in behaviours)
+			{
+				while (component.ComponentIndex >= m_recordableComponentList.Count)
+				{
+					m_recordableComponentList.Add(null);
+				}
+				m_recordableComponentList[component.ComponentIndex] = component;
+			}
+
+			if (netId != 0)
+			{
+				if (GamePacketManager.PlayerId != 0)
+				{
 					//プレイヤーIDが割り振った後ならすぐAuthorチェック
-					RecordableIdentityManager.RequestSyncAuthor (this);
-				} else {
+					RecordableIdentityManager.RequestSyncAuthor(this);
+				}
+				else
+				{
 					GamePacketManager.OnRegisterPlayer += OnConnect;
 					GamePacketManager.OnReconnectPlayer += OnConnect;
 				}
 			}
-        }
+		}
 
 		private void OnConnect (ushort playerId, ulong uniqueId) {
 			if(playerId == GamePacketManager.PlayerId) {
@@ -108,12 +123,12 @@ namespace ICKX.Radome {
 			m_isSyncComplete = true;
         }
 
-        internal byte AddRecordableBehaviour (RecordableBehaviour recordableBehaviour) {
-            m_recordableBehaviourList.Add (recordableBehaviour);
-            return (byte)m_recordableBehaviourList.Count;
+        public byte AddRecordableComponent (IRecordableComponent recordableComponent) {
+            m_recordableComponentList.Add (recordableComponent);
+            return (byte)m_recordableComponentList.Count;
         }
 
-        internal void SendRpc (ushort targetPlayerId, byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
+        public void SendRpc (ushort targetPlayerId, byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
             if (!isSyncComplete) return;
 
 			var writer = new DataStreamWriter (rpcPacket.Length + 9, Allocator.Temp);
@@ -127,7 +142,7 @@ namespace ICKX.Radome {
 			writer.Dispose ();
 		}
 
-		internal void BrodcastRpc (byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
+		public void BrodcastRpc (byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
             if (!isSyncComplete) return;
             var writer = new DataStreamWriter (rpcPacket.Length + 9, Allocator.Temp);
 			CreateRpcPacket (ref writer, ref rpcPacket, componentIndex, methodId);
@@ -168,8 +183,8 @@ namespace ICKX.Radome {
             byte componentIndex = rpcPacket.ReadByte(ref ctx);
             byte methodId = rpcPacket.ReadByte (ref ctx);
 
-            if (componentIndex < m_recordableBehaviourList.Count) {
-                var behaviour = m_recordableBehaviourList[componentIndex];
+            if (componentIndex < m_recordableComponentList.Count) {
+                var behaviour = m_recordableComponentList[componentIndex];
                 if (behaviour == null) return;
                 behaviour.OnRecieveRpcPacket (senderPlayerId, methodId, rpcPacket, ctx);
             }
