@@ -77,10 +77,26 @@ namespace ICKX.Radome {
 
 		public static ushort PlayerId {
 			get {
-				if(NetworkManager == null) {
+				if (NetworkManager == null)
+				{
 					return 0;
-				}else {
+				}
+				else
+				{
 					return NetworkManager.MyPlayerId;
+				}
+			}
+		}
+
+		public static ulong UniqueId {
+			get {
+				if (NetworkManager == null || NetworkManager.MyPlayerInfo == null)
+				{
+					return 0;
+				}
+				else
+				{
+					return NetworkManager.MyPlayerInfo.UniqueId;
 				}
 			}
 		}
