@@ -5,20 +5,9 @@ using UnityEngine;
 using ICKX.Radome;
 using Unity.Networking.Transport;
 
-public abstract class SyncPhaseManager<T, PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable where T : class, new()
+public abstract class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable
 {
 	public delegate void OnChangePhaseEvent(PhaseDef prev, PhaseDef next);
-
-	private static T s_instance = null;
-	public static T Instance {
-		get {
-			if (s_instance == null)
-			{
-				s_instance = new T();
-			}
-			return s_instance;
-		}
-	}
 
 	public PhaseDef CurrentPhase;
 	public event OnChangePhaseEvent OnChangePhase = null;
@@ -32,18 +21,18 @@ public abstract class SyncPhaseManager<T, PhaseDef> where PhaseDef : struct, Sys
 
 	public IReadOnlyDictionary<ulong, PhaseDef> SyncPhaseDefTable => _SyncPhaseDefTable;
 
-	public SyncPhaseManager ()
+	public SyncPhaseNotificator()
 	{
+		_PhaseTable = new Dictionary<PhaseDef, byte>();
 		var array = System.Enum.GetValues(typeof(PhaseDef));
 		_PhaseDefs = new PhaseDef[array.Length];
-		array.CopyTo( _PhaseDefs, array.Length);
 		for(byte i=0;i<array.Length;i++)
 		{
 			_PhaseDefs[i] = (PhaseDef)array.GetValue(i);
 			_PhaseTable[(PhaseDef)array.GetValue(i)] = i;
 		}
 
-		TypeNameHash = typeof(T).FullName.GetHashCode();
+		TypeNameHash = typeof(PhaseDef).FullName.GetHashCode();
 
 		GamePacketManager.OnRecievePacket += OnRecievePacket;
 	}
