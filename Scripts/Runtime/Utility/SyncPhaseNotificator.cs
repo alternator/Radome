@@ -5,7 +5,7 @@ using UnityEngine;
 using ICKX.Radome;
 using Unity.Networking.Transport;
 
-public abstract class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable
+public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable
 {
 	public delegate void OnChangePhaseEvent(PhaseDef prev, PhaseDef next);
 
@@ -52,8 +52,8 @@ public abstract class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, Sy
 
 	private void OnRecievePacket(ushort senderPlayerId, ulong uniqueId, byte type, Unity.Networking.Transport.DataStreamReader stream, Unity.Networking.Transport.DataStreamReader.Context ctx)
 	{
-		if (type == (byte)BuiltInPacket.Type.SyncPhase) return;
-		if (stream.ReadInt(ref ctx) == TypeNameHash) return;
+		if (type != (byte)BuiltInPacket.Type.SyncPhase) return;
+		if (stream.ReadInt(ref ctx) != TypeNameHash) return;
 
 		var phase = _PhaseDefs[stream.ReadByte(ref ctx)];
 		_SyncPhaseDefTable[uniqueId] = phase;
