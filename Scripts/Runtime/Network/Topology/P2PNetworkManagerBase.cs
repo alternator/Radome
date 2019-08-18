@@ -206,9 +206,13 @@ namespace ICKX.Radome
 			_ConnectionIdList.Clear();
 			_ConnectionIdPlayerIdTable.Clear();
 
-			foreach(var connId in _ConnIdUniqueIdable.Keys)
+			foreach(var pair in _ConnIdUniqueIdable)
 			{
-				if(GetPlayerIdByConnId(connId, out ushort playerId))
+				ConnIdType connId = pair.Key;
+				ConnectionInfo connInfo = GetConnectionInfoByUniqueId(pair.Value);
+				if (connInfo != null 
+					&& connInfo.State == NetworkConnection.State.Connected
+					&& GetPlayerIdByConnId(connId, out ushort playerId))
 				{
 					while (playerId >= _ConnectionIdList.Length) _ConnectionIdList.Add(EmptyConnId);
 					_ConnectionIdList[playerId] = connId;
@@ -227,7 +231,7 @@ namespace ICKX.Radome
 		/// <returns>接続終了でパケット解析を止める場合はtrue</returns>
 		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
 		{
-			Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
+			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
 			bool isReconnect;
 			switch (type)
 			{
