@@ -78,7 +78,7 @@ namespace ICKX.Radome
 
 		protected override void DisconnectMethod(int connId)
 		{
-			NetworkDriver.Disconnect(new NetworkConnection(connId));
+			NetworkDriver.Disconnect(_NetworkConnections[connId]);
 		}
 	}
 
@@ -101,10 +101,12 @@ namespace ICKX.Radome
 		public Driver NetworkDriver;
 		protected NativeArray<NetworkPipeline> _QosPipelines;
 
-		protected NativeList<int> _ConnectConnIdList;
-		protected NativeList<int> _DisconnectConnIdList;
+		protected NativeList<NetworkConnection> _ConnectConnIdList;
+		protected NativeList<NetworkConnection> _DisconnectConnIdList;
 		protected DataStreamWriter _RelayWriter;
 		protected NativeList<DataPacket> _RecieveDataStream;
+
+		protected NativeList<NetworkConnection> _NetworkConnections;
 
 		private bool _IsFirstUpdateComplete = false;
 
@@ -116,8 +118,9 @@ namespace ICKX.Radome
 
 		public ServerNetworkManager(PlayerInfo playerInfo) : base(playerInfo)
 		{
-			_ConnectConnIdList = new NativeList<int>(4, Allocator.Persistent);
-			_DisconnectConnIdList = new NativeList<int>(4, Allocator.Persistent);
+			_NetworkConnections = new NativeList<NetworkConnection>(4, Allocator.Persistent);
+			_ConnectConnIdList = new NativeList<NetworkConnection>(4, Allocator.Persistent);
+			_DisconnectConnIdList = new NativeList<NetworkConnection>(4, Allocator.Persistent);
 			_RelayWriter = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Persistent);
 			//_RecieveDataStream = new NativeMultiHashMap<int, DataStreamReader>(32, Allocator.Persistent);
 			_RecieveDataStream = new NativeList<DataPacket>(32, Allocator.Persistent);
@@ -136,6 +139,7 @@ namespace ICKX.Radome
 
 			JobHandle.Complete();
 
+			_NetworkConnections.Dispose();
 			_ConnectConnIdList.Dispose();
 			_DisconnectConnIdList.Dispose();
 			_RelayWriter.Dispose();
@@ -186,6 +190,7 @@ namespace ICKX.Radome
 			}
 			JobHandle.Complete();
 
+			_NetworkConnections.Clear();
 			_ConnectConnIdList.Clear();
 			_DisconnectConnIdList.Clear();
 			_RelayWriter.Clear();
@@ -222,13 +227,15 @@ namespace ICKX.Radome
 			NetworkConnection connection;
 			while ((connection = NetworkDriver.Accept()) != default)
 			{
-				Debug.Log("Accepted a connection =" + connection.InternalId);
+				while (connection.InternalId >= _NetworkConnections.Length) _NetworkConnections.Add(default);
+				_NetworkConnections[connection.InternalId] = connection;
+				Debug.Log("Accepted a connection =" + connection.InternalId + " : " + connection.GetHashCode());
 			}
 			CheckTimeOut(registrationTimeOut);
 
 			for (ushort i = 0; i < _DisconnectConnIdList.Length; i++)
 			{
-				OnDisconnectMethod(_DisconnectConnIdList[i]);
+				OnDisconnectMethod(_DisconnectConnIdList[i].InternalId);
 			}
 
 			for (int i = 0; i < _RecieveDataStream.Length; i++)
@@ -287,7 +294,7 @@ namespace ICKX.Radome
 			{
 				packet.Write((byte)BuiltInPacket.Type.MeasureRtt);
 				packet.Write(GamePacketManager.CurrentUnixTime);
-
+				
 				Broadcast(packet, QosType.Unreliable, true);
 			}
 		}
@@ -298,6 +305,7 @@ namespace ICKX.Radome
 			{
 				driver = NetworkDriver,
 				connections = _ConnectionIdList,
+				networkConnections = _NetworkConnections,
 				singlePacketBuffer = _SinglePacketBuffer,
 				rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBuffer,
 				udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBuffer,
@@ -314,6 +322,7 @@ namespace ICKX.Radome
 			{
 				driver = NetworkDriver,
 				connections = _ConnectionIdList,
+				networkConnections = _NetworkConnections,
 				qosPipelines = _QosPipelines,
 				connectConnIdList = _ConnectConnIdList,
 				disconnectConnIdList = _DisconnectConnIdList,
@@ -329,6 +338,8 @@ namespace ICKX.Radome
 			public Driver driver;
 			[ReadOnly]
 			public NativeList<int> connections;
+			[ReadOnly]
+			public NativeList<NetworkConnection> networkConnections;
 
 			[ReadOnly]
 			public DataStreamWriter singlePacketBuffer;
@@ -390,9 +401,9 @@ namespace ICKX.Radome
 							{
 								if (i == serverPlayerId) continue;
 
-								var connection = new NetworkConnection(connections[i]);
+								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[qos], temp);
-								//Debug.Log($"{targetPlayerId} : qos{qos} : Len{packetDataLen}");
+								Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 							}
 						}
 						else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
@@ -401,17 +412,17 @@ namespace ICKX.Radome
 							{
 								if (multiCastList[i] < connections.Length)
 								{
-									var connection = new NetworkConnection(connections[multiCastList[i]]);
+									var connection = networkConnections[connections[multiCastList[i]]];
 									connection.Send(driver, qosPipelines[qos], temp);
-									//Debug.Log($"{targetPlayerId} : qos{qos} : Len{packetDataLen}");
+									Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 								}
 							}
 						}
 						else
 						{
-							var connection = new NetworkConnection(connections[targetPlayerId]);
-							connection.Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
-							//Debug.Log($"{targetPlayerId} : qos{qos} : Len{packetDataLen}");
+							var connection = networkConnections[connections[targetPlayerId]];
+							connection.Send(driver, qosPipelines[qos], temp);
+							Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 						}
 					}
 				}
@@ -446,7 +457,7 @@ namespace ICKX.Radome
 
 							if (connections[i] != -1)
 							{
-								var connection = new NetworkConnection(connections[i]);
+								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
 							}
 						}
@@ -482,7 +493,7 @@ namespace ICKX.Radome
 
 							if (connections[i] != -1)
 							{
-								var connection = new NetworkConnection(connections[i]);
+								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[(byte)QosType.Reliable], temp);
 								//connections[i].Send(driver, temp);
 							}
@@ -501,10 +512,12 @@ namespace ICKX.Radome
 			[ReadOnly]
 			public NativeList<int> connections;
 			[ReadOnly]
+			public NativeList<NetworkConnection> networkConnections;
+			[ReadOnly]
 			public NativeArray<NetworkPipeline> qosPipelines;
 
-			public NativeList<int> connectConnIdList;
-			public NativeList<int> disconnectConnIdList;
+			public NativeList<NetworkConnection> connectConnIdList;
+			public NativeList<NetworkConnection> disconnectConnIdList;
 			public DataStreamWriter relayWriter;
 			//public NativeMultiHashMap<int, DataStreamReader> dataStream;
 			public NativeList<DataPacket> dataStream;
@@ -526,12 +539,12 @@ namespace ICKX.Radome
 					if (cmd == NetworkEvent.Type.Connect)
 					{
 						Debug.Log($"NetworkEvent.Type.Connect con={con.InternalId}");
-						connectConnIdList.Add(con.InternalId);
+						connectConnIdList.Add(con);
 					}
 					else if (cmd == NetworkEvent.Type.Disconnect)
 					{
 						Debug.Log($"NetworkEvent.Type.Disconnect con={con.InternalId}");
-						disconnectConnIdList.Add(con.InternalId);
+						disconnectConnIdList.Add(con);
 					}
 					else if (cmd == NetworkEvent.Type.Data)
 					{
@@ -548,6 +561,11 @@ namespace ICKX.Radome
 						byte qos = stream.ReadByte(ref ctx);
 						ushort targetPlayerId = stream.ReadUShort(ref ctx);
 						ushort senderPlayerId = stream.ReadUShort(ref ctx);
+
+						var ctx2 = ctx;
+						byte type = stream.ReadByte(ref ctx2);
+
+						//if (type == (byte)BuiltInPacket.Type.MeasureRtt) continue;
 
 						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
 						{
@@ -631,7 +649,7 @@ namespace ICKX.Radome
 			{
 				relayWriter.Clear();
 				relayWriter.WriteBytes(stream.GetUnsafeReadOnlyPtr(), stream.Length);
-				var connection = new NetworkConnection(connections[targetPlayerId]);
+				var connection = networkConnections[connections[targetPlayerId]];
 				connection.Send(driver, qosPipelines[qos], relayWriter);
 				//connections[targetPlayerId].Send(driver, relayWriter);
 			}
@@ -912,7 +930,7 @@ namespace ICKX.Radome
 
 		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
 		{
-			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
+			Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
 			switch (type)
 			{
 				case (byte)BuiltInPacket.Type.RegisterPlayer:

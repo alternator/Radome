@@ -377,6 +377,8 @@ namespace ICKX.Radome
         {
             byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
 
+			//Debug.Log("sendsingle " + targetPlayerId + " : Len=" + data.Length);
+
             if (_SinglePacketBuffer.Length + data.Length + 5 >= _SinglePacketBuffer.Capacity)
             {
                 _SinglePacketBuffer.Capacity *= 2;
@@ -641,7 +643,7 @@ namespace ICKX.Radome
 		{
 			if (IsRegisteredPlayer(playerInfo.PlayerId, playerInfo.UniqueId))
 			{
-				SetConnState(playerInfo.UniqueId, NetworkConnection.State.Connected);
+				SetActiveConnInfo(playerInfo.UniqueId, connId, NetworkConnection.State.Connected);
 				return;
 			}
 
@@ -700,6 +702,9 @@ namespace ICKX.Radome
 				var info = GetConnectionInfoByPlayerId(playerId);
 				if (info != null)
 				{
+					_ConnIdUniqueIdable.Remove(info.ConnId);
+
+					info.ConnId = EmptyConnId;
 					info.State = NetworkConnection.State.AwaitingResponse;
 					info.DisconnectTime = Time.realtimeSinceStartup;
 
