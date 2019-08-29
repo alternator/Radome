@@ -644,6 +644,12 @@ namespace ICKX.Radome
 			if (IsRegisteredPlayer(playerInfo.PlayerId, playerInfo.UniqueId))
 			{
 				SetActiveConnInfo(playerInfo.UniqueId, connId, NetworkConnection.State.Connected);
+				//イベント通知
+				if (isReconnect)
+				{
+					Debug.Log("Reconnect " + playerInfo.PlayerId + " : " + playerInfo.UniqueId);
+					ExecOnReconnectPlayer(playerInfo.PlayerId, playerInfo.UniqueId);
+				}
 				return;
 			}
 
@@ -660,6 +666,7 @@ namespace ICKX.Radome
 			//イベント通知
 			if (isReconnect)
 			{
+				Debug.Log("Reconnect " + playerInfo.PlayerId + " : " + playerInfo.UniqueId);
 				ExecOnReconnectPlayer(playerInfo.PlayerId, playerInfo.UniqueId);
 			}
 		}
