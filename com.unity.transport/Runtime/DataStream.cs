@@ -666,8 +666,8 @@ namespace Unity.Networking.Transport
 			}
 			else
 			{
-				Write((ushort)value.Length);
 				var data = System.Text.Encoding.UTF8.GetBytes(value);
+				Write((ushort)data.Length);
 				fixed (byte* dataPtr = data)
 				{
 					WriteBytes(dataPtr, data.Length);
