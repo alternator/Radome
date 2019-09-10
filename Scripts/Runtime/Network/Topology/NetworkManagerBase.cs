@@ -150,7 +150,13 @@ namespace ICKX.Radome
             Debug.Log("Dispose");
         }
 
-        public virtual void Stop()
+		
+		public virtual void OnApplicationPause (bool pause)
+		{
+
+		}
+		
+		public virtual void Stop()
         {
             if (NetworkState == NetworkConnection.State.Disconnected)
             {

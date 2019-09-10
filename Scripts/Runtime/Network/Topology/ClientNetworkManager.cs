@@ -58,7 +58,8 @@ namespace ICKX.Radome
 			_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
 
 			var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
-			ServerConnId = NetworkDriver.Connect(endpoint).InternalId;
+			ServerConnection = NetworkDriver.Connect(endpoint);
+			ServerConnId = ServerConnection.InternalId;
 
 			base.Start();
 		}
@@ -72,7 +73,8 @@ namespace ICKX.Radome
 				var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
 				NetworkState = NetworkConnection.State.Connecting;
 
-				ServerConnId = NetworkDriver.Connect(endpoint).InternalId;
+				ServerConnection = NetworkDriver.Connect(endpoint);
+				ServerConnId = ServerConnection.InternalId;
 
 				Debug.Log("Reconnect");
 			}
@@ -105,6 +107,8 @@ namespace ICKX.Radome
 
 		private bool _IsFirstUpdateComplete = false;
 
+		public NetworkConnection ServerConnection { get; protected set; }
+
 		public ClientNetworkManager(PlayerInfo playerInfo) : base(playerInfo)
 		{
 			_QosPipelines = new NativeArray<NetworkPipeline>((int)QosType.ChunkEnd, Allocator.Persistent);
@@ -130,12 +134,26 @@ namespace ICKX.Radome
 			base.Dispose();
 		}
 
+		public override void OnApplicationPause(bool pause)
+		{
+			JobHandle.Complete();
+
+			base.OnApplicationPause(pause);
+			if(pause)
+			{
+				NetworkDriver.Disconnect(ServerConnection);
+			}
+			else
+			{
+				DisconnectServer(ServerConnId);
+			}
+		}
+
 		protected new void Start()
 		{
 			base.Start();
 		}
-
-
+		
 		/// <summary>
 		/// クライアント接続停止
 		/// </summary>
@@ -163,10 +181,9 @@ namespace ICKX.Radome
 			}
 			JobHandle.Complete();
 
-			var serverConnection = new NetworkConnection(ServerConnId);
-			if (serverConnection.GetState(NetworkDriver) != NetworkConnection.State.Disconnected)
+			if (ServerConnection.GetState(NetworkDriver) != NetworkConnection.State.Disconnected)
 			{
-				serverConnection.Disconnect(NetworkDriver);
+				ServerConnection.Disconnect(NetworkDriver);
 			}
 
 			NetworkState = NetworkConnection.State.Disconnected;
@@ -204,12 +221,16 @@ namespace ICKX.Radome
 				if (cmd == NetworkEvent.Type.Connect)
 				{
 					//Serverと接続完了
+					ServerConnection = connId;
 					ServerConnId = connId.InternalId;
 					ConnectServer(connId.InternalId);
 				}
 				else if (cmd == NetworkEvent.Type.Disconnect)
 				{
-					DisconnectServer(connId.InternalId);
+					if(ServerConnection == connId)
+					{
+						DisconnectServer(connId.InternalId);
+					}
 					return;
 				}
 				else if (cmd == NetworkEvent.Type.Data)
@@ -295,8 +316,7 @@ namespace ICKX.Radome
 
 		protected JobHandle ScheduleSendPacket(JobHandle jobHandle)
 		{
-			var serverConnection = new NetworkConnection(ServerConnId);
-			if (serverConnection.GetState(NetworkDriver) != NetworkConnection.State.Connected)
+			if (ServerConnection.GetState(NetworkDriver) != NetworkConnection.State.Connected)
 			{
 				return default;
 			}
@@ -304,7 +324,7 @@ namespace ICKX.Radome
 			var sendPacketsJob = new SendPacketaJob()
 			{
 				driver = NetworkDriver,
-				serverConnection = serverConnection,
+				serverConnection = ServerConnection,
 				singlePacketBuffer = _SinglePacketBuffer,
 				rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBuffer,
 				udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBuffer,
@@ -500,6 +520,7 @@ namespace ICKX.Radome
 
 		protected void ConnectServer(int connId)
 		{
+			JobHandle.Complete();
 			Debug.Log("IsConnected" + connId);
 
 			if (NetworkState == NetworkConnection.State.AwaitingResponse)
@@ -515,8 +536,9 @@ namespace ICKX.Radome
 			}
 		}
 
-		protected void DisconnectServer(int connId)
+		protected void DisconnectServer(int connId, bool reconnect = true)
 		{
+			JobHandle.Complete();
 			Debug.Log("IsDisconnected" + connId);
 			if (IsStopRequest)
 			{
@@ -536,7 +558,7 @@ namespace ICKX.Radome
 					ExecOnDisconnectAll(1);    //TODO ErrorCodeを取得する方法を探す
 					NetworkState = NetworkConnection.State.AwaitingResponse;
 				}
-				ReconnectMethod();
+				if(reconnect) ReconnectMethod();
 			}
 		}
 
