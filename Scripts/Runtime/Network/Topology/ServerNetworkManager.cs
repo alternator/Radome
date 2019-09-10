@@ -403,7 +403,7 @@ namespace ICKX.Radome
 
 								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[qos], temp);
-								Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+								//Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 							}
 						}
 						else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
@@ -414,7 +414,7 @@ namespace ICKX.Radome
 								{
 									var connection = networkConnections[connections[multiCastList[i]]];
 									connection.Send(driver, qosPipelines[qos], temp);
-									Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+									//Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 								}
 							}
 						}
@@ -422,7 +422,7 @@ namespace ICKX.Radome
 						{
 							var connection = networkConnections[connections[targetPlayerId]];
 							connection.Send(driver, qosPipelines[qos], temp);
-							Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+							//Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 						}
 					}
 				}
@@ -930,7 +930,7 @@ namespace ICKX.Radome
 
 		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
 		{
-			Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
+			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
 			switch (type)
 			{
 				case (byte)BuiltInPacket.Type.RegisterPlayer:
