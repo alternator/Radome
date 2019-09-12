@@ -116,7 +116,7 @@ namespace ICKX.Radome
 
         public DefaultPlayerInfo MyPlayerInfo { get; protected set; }
 
-        public ushort MyPlayerId { get { return MyPlayerInfo.PlayerId; } }
+        public ushort MyPlayerId { get { return (MyPlayerInfo == null ? (ushort)0 : MyPlayerInfo.PlayerId); } }
         public bool IsLeader { get; protected set; }
         public bool IsStopRequest { get; protected set; }
 
