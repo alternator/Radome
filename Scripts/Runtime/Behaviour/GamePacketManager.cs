@@ -113,23 +113,36 @@ namespace ICKX.Radome {
 			}
 		}
 
-		public static long currentUnixTime { get; private set; }
+		public static long CurrentUnixTime { get; private set; }
 
-		public static uint progressTimeSinceStartup {
-			get { return (uint)(currentUnixTime - LeaderStartTime); }
+		public static uint ProgressTimeSinceStartup {
+			get { return (uint)(CurrentUnixTime - LeaderStartTime); }
+		}
+
+		public static NetworkConnection.State NetworkState {
+			get {
+				if (NetworkManager == null)
+				{
+					return NetworkConnection.State.Disconnected;
+				}
+				else
+				{
+					return NetworkManager.NetworkState;
+				}
+			}
 		}
 
 		private static void Update() {
-			currentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+			CurrentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 		}
 
 		public static ushort GetPlayerCount () {
 			return (NetworkManager == null) ? (ushort)0 : NetworkManager.GetPlayerCount () ;
 		}
 
-        public static IReadOnlyList<DefaultPlayerInfo> PlayerInfoList {
-            get { return NetworkManager != null ? NetworkManager.PlayerInfoList : null ; }
-        }
+        //public static IReadOnlyList<DefaultPlayerInfo> PlayerInfoList {
+        //    get { return NetworkManager != null ? NetworkManager.ActivePlayerInfoTable : null ; }
+        //}
 
 		public bool IsActivePlayerId (ushort playerId) {
 			return NetworkManager.IsActivePlayerId (playerId);

@@ -660,13 +660,20 @@ namespace Unity.Networking.Transport
         /// <param name="value"></param>
         public void Write(string value)
         {
-            Write((ushort)value.Length);
-            var data = System.Text.Encoding.UTF8.GetBytes(value);
-            fixed (byte* dataPtr = data)
-            {
-                WriteBytes(dataPtr, data.Length);
-            }
-        }
+			if(string.IsNullOrEmpty(value))
+			{
+				Write((ushort)0);
+			}
+			else
+			{
+				var data = System.Text.Encoding.UTF8.GetBytes(value);
+				Write((ushort)data.Length);
+				fixed (byte* dataPtr = data)
+				{
+					WriteBytes(dataPtr, data.Length);
+				}
+			}
+		}
 
         public static int GetByteSizeStr(string value)
         {
@@ -1059,6 +1066,7 @@ namespace Unity.Networking.Transport
 		public string ReadString (ref Context ctx) {
 			var byteLen = ReadUShort (ref ctx);
 
+			if (byteLen == 0) return string.Empty;
 			fixed (byte* data = new byte[byteLen]) {
 				ReadBytes (ref ctx, data, byteLen);
 				return System.Text.Encoding.UTF8.GetString (data, byteLen);

@@ -1,6 +1,6 @@
 using System;
 using System.Diagnostics;
-using Unity.Burst;
+//using Unity.Burst;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -395,7 +395,7 @@ namespace Unity.Networking.Transport
 
         public bool IsCreated => m_InternalState.IsCreated;
 
-        [BurstCompile]
+        //[BurstCompile]
         struct UpdateJob : IJob
         {
             public GenericNetworkDriver<T, TNetworkPipelineStageCollection> driver;

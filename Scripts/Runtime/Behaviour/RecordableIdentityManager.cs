@@ -38,7 +38,7 @@ namespace ICKX.Radome {
 		}
 
 		public static uint progressTimeSinceStartup {
-			get { return GamePacketManager.progressTimeSinceStartup; }
+			get { return GamePacketManager.ProgressTimeSinceStartup; }
 		}
 
 		protected void Awake () {
