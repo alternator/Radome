@@ -66,12 +66,30 @@ namespace ICKX.Radome
 
 		protected override void ReconnectMethod()
 		{
+			JobHandle.Complete();
+
 			Debug.Log("Reconnect" + NetworkState + " : " + serverAdress + ":" + serverPort);
 
 			if (NetworkState != NetworkConnection.State.Connected)
 			{
 				var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
 				NetworkState = NetworkConnection.State.Connecting;
+
+				if (NetworkDriver.IsCreated)
+				{
+					NetworkDriver.Dispose();
+				}
+				NetworkDriver = new UdpNetworkDriver(new INetworkParameter[] {
+					Config,
+					new ReliableUtility.Parameters { WindowSize = 128 },
+					new NetworkPipelineParams {initialCapacity = ushort.MaxValue},
+					//new SimulatorUtility.Parameters {MaxPacketSize = 256, MaxPacketCount = 32, PacketDelayMs = 100},
+				});
+				_QosPipelines[(int)QosType.Empty] = NetworkDriver.CreatePipeline();
+				//_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline();
+				//_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
+				_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage), typeof(SimulatorPipelineStage));
+				_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
 
 				ServerConnection = NetworkDriver.Connect(endpoint);
 				ServerConnId = ServerConnection.InternalId;
