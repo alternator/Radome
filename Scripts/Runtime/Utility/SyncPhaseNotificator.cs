@@ -7,6 +7,12 @@ using Unity.Networking.Transport;
 
 public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable
 {
+	public enum SyncMode
+	{
+		Default, 
+		Force,
+	}
+
 	public delegate void OnChangePhaseEvent(PhaseDef prev, PhaseDef next);
 
 	public PhaseDef CurrentPhase;
@@ -37,14 +43,40 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 		GamePacketManager.OnRecievePacket += OnRecievePacket;
 	}
 
+	/// <summary>
+	/// ローカル環境で任意のフェイズに到達したことを申告する
+	/// 全クライアントが一致した場合に
+	/// </summary>
 	public void SetPhase (PhaseDef phase)
 	{
 		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
 
-		using (var packet = new DataStreamWriter (6, Unity.Collections.Allocator.Temp))
+		using (var packet = new DataStreamWriter (8, Unity.Collections.Allocator.Temp))
 		{
 			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
 			packet.Write(TypeNameHash);
+			packet.Write((byte)SyncMode.Default);
+			packet.Write(_PhaseTable[phase]);
+			GamePacketManager.Brodcast(packet, QosType.Reliable);
+		}
+
+		CheckComplate(phase);
+	}
+
+	/// <summary>
+	/// サーバー専用 全クライアントを待たず強制的に指定のPhaseに遷移させる
+	/// </summary>
+	public void ForceSetPhase(PhaseDef phase)
+	{
+		if (!GamePacketManager.IsLeader) return;
+		
+		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
+
+		using (var packet = new DataStreamWriter(6, Unity.Collections.Allocator.Temp))
+		{
+			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
+			packet.Write(TypeNameHash);
+			packet.Write((byte)SyncMode.Force);
 			packet.Write(_PhaseTable[phase]);
 			GamePacketManager.Brodcast(packet, QosType.Reliable);
 		}
@@ -55,19 +87,39 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 		if (type != (byte)BuiltInPacket.Type.SyncPhase) return;
 		if (stream.ReadInt(ref ctx) != TypeNameHash) return;
 
+		SyncMode mode = (SyncMode)stream.ReadByte(ref ctx);
 		var phase = _PhaseDefs[stream.ReadByte(ref ctx)];
-		_SyncPhaseDefTable[uniqueId] = phase;
 
+		if (mode == SyncMode.Default)
+		{
+			_SyncPhaseDefTable[uniqueId] = phase;
+			CheckComplate(phase);
+		}
+		else
+		{
+			foreach (var key in _SyncPhaseDefTable.Keys)
+			{
+				_SyncPhaseDefTable[key] = phase;
+			}
+
+			PhaseDef prev = CurrentPhase;
+			CurrentPhase = phase;
+			OnChangePhase?.Invoke(prev, phase);
+		}
+	}
+
+	private void CheckComplate (PhaseDef phase)
+	{
 		bool isComplete = true;
 		foreach (var pair in _SyncPhaseDefTable)
 		{
-			if (phase.Equals(pair.Value))
+			if (!phase.Equals(pair.Value))
 			{
 				isComplete = false;
 			}
 		}
 
-		if(isComplete)
+		if (isComplete)
 		{
 			PhaseDef prev = CurrentPhase;
 			CurrentPhase = phase;

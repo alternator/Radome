@@ -56,6 +56,8 @@ namespace ICKX.Radome {
 
         private List<IRecordableComponent> m_recordableComponentList;
 
+		public IReadOnlyList<IRecordableComponent> RecordableComponentList => m_recordableComponentList;
+
 		private bool _IsInit = false;
 
 		internal void RegisterTransform (RecordableTransform trans) {
