@@ -119,6 +119,20 @@ namespace ICKX.Radome {
 			}
 		}
 
+		public static ushort ReserveNetIdForHost ()
+		{
+			if (GamePacketManager.IsLeader)
+			{
+				ushort count = (ushort)Instance.m_identityList.Count;
+				Instance.m_identityList.Add(null);
+				return count;
+			}
+			else
+			{
+				throw new System.NotImplementedException();
+			}
+		}
+
 		/// <summary>
 		/// ReserveNetIdで確保したNetIDでidentityを登録する
 		/// このメソッド単体でSpawn処理は行わないので、それぞれのclientでIdentityを生成した後で実行すること
