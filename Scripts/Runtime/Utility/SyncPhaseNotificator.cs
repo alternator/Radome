@@ -51,7 +51,7 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 	{
 		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
 
-		using (var packet = new DataStreamWriter (8, Unity.Collections.Allocator.Temp))
+		using (var packet = new DataStreamWriter (16, Unity.Collections.Allocator.Temp))
 		{
 			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
 			packet.Write(TypeNameHash);
@@ -69,10 +69,11 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 	public void ForceSetPhase(PhaseDef phase)
 	{
 		if (!GamePacketManager.IsLeader) return;
-		
+		if (CurrentPhase.Equals(phase)) return;
+
 		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
 
-		using (var packet = new DataStreamWriter(6, Unity.Collections.Allocator.Temp))
+		using (var packet = new DataStreamWriter(16, Unity.Collections.Allocator.Temp))
 		{
 			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
 			packet.Write(TypeNameHash);
@@ -80,6 +81,10 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 			packet.Write(_PhaseTable[phase]);
 			GamePacketManager.Brodcast(packet, QosType.Reliable);
 		}
+
+		PhaseDef prev = CurrentPhase;
+		CurrentPhase = phase;
+		OnChangePhase?.Invoke(prev, phase);
 	}
 
 	private void OnRecievePacket(ushort senderPlayerId, ulong uniqueId, byte type, Unity.Networking.Transport.DataStreamReader stream, Unity.Networking.Transport.DataStreamReader.Context ctx)
@@ -97,7 +102,8 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 		}
 		else
 		{
-			foreach (var key in _SyncPhaseDefTable.Keys)
+			var keys = _SyncPhaseDefTable.Keys.ToArray();
+			foreach (var key in keys)
 			{
 				_SyncPhaseDefTable[key] = phase;
 			}
@@ -119,7 +125,7 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 			}
 		}
 
-		if (isComplete)
+		if (isComplete && !CurrentPhase.Equals(phase))
 		{
 			PhaseDef prev = CurrentPhase;
 			CurrentPhase = phase;
