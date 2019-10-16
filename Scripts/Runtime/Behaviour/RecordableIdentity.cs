@@ -84,18 +84,24 @@ namespace ICKX.Radome {
 				}
 				m_recordableComponentList[component.ComponentIndex] = component;
 			}
+			if (netId != 0)
+			{
+				if (GamePacketManager.PlayerId == 0)
+				{
+					GamePacketManager.OnRegisterPlayer += OnConnect;
+					GamePacketManager.OnReconnectPlayer += OnConnect;
+				}
+			}
+		}
 
+		private void Start()
+		{
 			if (netId != 0)
 			{
 				if (GamePacketManager.PlayerId != 0)
 				{
 					//プレイヤーIDが割り振った後ならすぐAuthorチェック
 					RecordableIdentityManager.RequestSyncAuthor(this);
-				}
-				else
-				{
-					GamePacketManager.OnRegisterPlayer += OnConnect;
-					GamePacketManager.OnReconnectPlayer += OnConnect;
 				}
 			}
 		}
