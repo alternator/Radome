@@ -56,8 +56,11 @@ namespace ICKX.Radome
 			_QosPipelines[(int)QosType.Empty] = NetworkDriver.CreatePipeline();
 			//_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline();
 			//_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
-			_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage), typeof(SimulatorPipelineStage));
-			_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
+
+			_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
+			_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
+			//_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
+			//_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
 
 			var endPoint = NetworkEndPoint.AnyIpv4;
 			endPoint.Port = (ushort)port;
@@ -279,7 +282,7 @@ namespace ICKX.Radome
 			_BroadcastRudpChunkedPacketManager.WriteCurrentBuffer();
 			_BroadcastUdpChunkedPacketManager.WriteCurrentBuffer();
 			_RecieveDataStream.Clear();
-
+			
 			JobHandle = ScheduleSendPacket(default);
 			JobHandle = NetworkDriver.ScheduleUpdate(JobHandle);
 			JobHandle = ScheduleRecieve(JobHandle);
@@ -400,7 +403,8 @@ namespace ICKX.Radome
 							for (ushort i = 0; i < connections.Length; i++)
 							{
 								if (i == serverPlayerId) continue;
-
+								if (i >= connections.Length) continue;
+								if (connections[i] >= networkConnections.Length) continue;
 								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[qos], temp);
 								//Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
@@ -412,6 +416,8 @@ namespace ICKX.Radome
 							{
 								if (multiCastList[i] < connections.Length)
 								{
+									if (multiCastList[i] >= connections.Length) continue;
+									if (connections[multiCastList[i]] >= networkConnections.Length) continue;
 									var connection = networkConnections[connections[multiCastList[i]]];
 									connection.Send(driver, qosPipelines[qos], temp);
 									//Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
@@ -420,6 +426,7 @@ namespace ICKX.Radome
 						}
 						else
 						{
+							if (connections[targetPlayerId] >= networkConnections.Length) continue;
 							var connection = networkConnections[connections[targetPlayerId]];
 							connection.Send(driver, qosPipelines[qos], temp);
 							//Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
@@ -933,6 +940,8 @@ namespace ICKX.Radome
 			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
 			switch (type)
 			{
+				case (byte)BuiltInPacket.Type.MeasureRtt:
+					break;
 				case (byte)BuiltInPacket.Type.RegisterPlayer:
 					{
 						var addPlayerInfo = new PlayerInfo();

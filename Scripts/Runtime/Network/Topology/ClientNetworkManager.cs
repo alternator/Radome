@@ -54,8 +54,8 @@ namespace ICKX.Radome
 			_QosPipelines[(int)QosType.Empty] = NetworkDriver.CreatePipeline();
 			//_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline();
 			//_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
-			_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage), typeof(SimulatorPipelineStage));
-			_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline(typeof(SimulatorPipelineStage));
+			_QosPipelines[(int)QosType.Reliable] = NetworkDriver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
+			_QosPipelines[(int)QosType.Unreliable] = NetworkDriver.CreatePipeline();
 
 			var endpoint = NetworkEndPoint.Parse(serverAdress.ToString(), serverPort);
 			ServerConnection = NetworkDriver.Connect(endpoint);
