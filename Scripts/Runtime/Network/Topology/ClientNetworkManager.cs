@@ -68,7 +68,7 @@ namespace ICKX.Radome
 		{
 			JobHandle.Complete();
 
-			Debug.Log("Reconnect" + NetworkState + " : " + serverAdress + ":" + serverPort);
+			Debug.Log("ReconnectMethod" + NetworkState + " : " + serverAdress + ":" + serverPort);
 
 			if (NetworkState != NetworkConnection.State.Connected)
 			{
@@ -207,7 +207,6 @@ namespace ICKX.Radome
 			NetworkState = NetworkConnection.State.Disconnected;
 
 			_IsFirstUpdateComplete = false;
-			NetworkState = NetworkConnection.State.Disconnected;
 		}
 
 		protected override void SendToConnIdImmediately(int connId, DataStreamWriter packet, bool reliable)
@@ -245,10 +244,7 @@ namespace ICKX.Radome
 				}
 				else if (cmd == NetworkEvent.Type.Disconnect)
 				{
-					if(ServerConnection == connId)
-					{
-						DisconnectServer(connId.InternalId);
-					}
+					DisconnectServer(connId.InternalId);
 					return;
 				}
 				else if (cmd == NetworkEvent.Type.Data)
@@ -539,16 +535,17 @@ namespace ICKX.Radome
 		protected void ConnectServer(int connId)
 		{
 			JobHandle.Complete();
-			Debug.Log("IsConnected" + connId);
 
 			if (NetworkState == NetworkConnection.State.AwaitingResponse)
 			{
+				Debug.Log("IsReConnected" + connId);
 				//再接続
 				//サーバーに自分のPlayerInfoを教える
 				SendReconnectPlayerPacket(ServerPlayerId);
 			}
 			else
 			{
+				Debug.Log("IsConnected" + connId);
 				//サーバーに自分のPlayerInfoを教える
 				SendRegisterPlayerPacket(ServerPlayerId);
 			}
