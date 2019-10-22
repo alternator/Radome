@@ -11,6 +11,7 @@ using UnityEngine;
 using Unity.Jobs;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using Unity.Collections.LowLevel.Unsafe;
+using System.Linq;
 
 namespace ICKX.Radome
 {
@@ -76,7 +77,10 @@ namespace ICKX.Radome
 			Debug.Log(adress);
 			if (adress.ToString().Contains("169.254"))
 			{
-				IPEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), port);
+				IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+				IPAddress ipAddress = ipHostInfo.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().Contains("169"));
+				IPEndPoint = new IPEndPoint(ipAddress, port);
+				//IPEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), port);
 			}
 			else
 			{

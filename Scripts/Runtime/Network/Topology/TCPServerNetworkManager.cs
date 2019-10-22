@@ -11,6 +11,7 @@ using UnityEngine;
 using Unity.Jobs;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using Unity.Collections.LowLevel.Unsafe;
+using System.Linq;
 
 namespace ICKX.Radome
 {
@@ -109,7 +110,9 @@ namespace ICKX.Radome
 				return;
 			}
 
-			IPEndPoint = new IPEndPoint(IPAddress.Loopback, port);
+			IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+			IPAddress ipAddress = ipHostInfo.AddressList.First(a=>a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().Contains("169"));
+			IPEndPoint = new IPEndPoint(ipAddress, port);
 
 			ListenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 			ListenerSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -119,7 +122,7 @@ namespace ICKX.Radome
 				ListenerSocket.Bind(IPEndPoint);
 				ListenerSocket.Listen(100);
 				ExecOnConnect();
-				Debug.Log("Listen");
+				Debug.Log("Listen : " + IPEndPoint);
 
 				Start();
 
@@ -132,7 +135,7 @@ namespace ICKX.Radome
 			}
 			catch (System.Exception e)
 			{
-				Debug.Log("Failed to bind to port");
+				Debug.Log("Failed to bind to port : " + IPEndPoint);
 				ExecOnConnectFailed(1);
 			}
 		}
