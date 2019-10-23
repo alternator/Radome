@@ -598,6 +598,14 @@ namespace ICKX.Radome
 					{
 						ushort tcpPacketSize = stream.ReadUShort(ref ctx);
 
+						Debug.Log($"tcpPacketSize {tcpPacketSize} : streamLen {stream.Length} : pos {stream.GetBytesRead(ref ctx)}");
+						if (stream.GetBytesRead(ref ctx) + tcpPacketSize > stream.Length)
+						{
+							var c = new DataStreamReader.Context();
+							Debug.Log("BugPacketDump : " + string.Join(", ", stream.ReadBytesAsArray(ref c, stream.Length)));
+							continue;
+						}
+
 						var packet = stream.ReadChunk(ref ctx, tcpPacketSize);
 
 						var ctx2 = new DataStreamReader.Context();
