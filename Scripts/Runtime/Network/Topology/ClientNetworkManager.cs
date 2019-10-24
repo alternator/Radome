@@ -536,7 +536,7 @@ namespace ICKX.Radome
 		{
 			JobHandle.Complete();
 
-			if (NetworkState == NetworkConnection.State.AwaitingResponse)
+			if (MyPlayerInfo.PlayerId != 0)
 			{
 				Debug.Log("IsReConnected" + connId);
 				//再接続
@@ -565,7 +565,7 @@ namespace ICKX.Radome
 				if (NetworkState == NetworkConnection.State.Connecting)
 				{
 					ExecOnConnectFailed(1); //TODO ErrorCodeを取得する方法を探す
-					NetworkState = NetworkConnection.State.Disconnected;
+					if (!reconnect) NetworkState = NetworkConnection.State.Disconnected;
 				}
 				else
 				{
@@ -573,7 +573,7 @@ namespace ICKX.Radome
 					ExecOnDisconnectAll(1);    //TODO ErrorCodeを取得する方法を探す
 					NetworkState = NetworkConnection.State.AwaitingResponse;
 				}
-				if(reconnect) ReconnectMethod();
+				if (reconnect) ReconnectMethod();
 			}
 		}
 
