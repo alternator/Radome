@@ -18,14 +18,15 @@ namespace ICKX.Radome
 	public class TcpStateObject
 	{
 		public const int StateBufferSize = ushort.MaxValue;
-		public const int MaxRecievePacketSize = 2048;
+		public const int MaxRecievePacketBufferSize = ushort.MaxValue;
+		public const int MaxSendPacketBufferSize = 4096;
 
 		//public TcpServerManager<PlayerInfo> Server;
 		public short ConnId = -1;
 		public Socket Socket;
-		public byte[] TempBuffer = new byte[MaxRecievePacketSize];
+		public byte[] TempBuffer = new byte[MaxRecievePacketBufferSize];
 		public int SendBufferStartIndex;
-		public byte[] SendBuffer = new byte[MaxRecievePacketSize * 4];
+		public byte[] SendBuffer = new byte[MaxSendPacketBufferSize];
 
 		public int BufferStartIndex;
 		public byte[] Buffer = new byte[StateBufferSize];

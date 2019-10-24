@@ -18,10 +18,7 @@ namespace ICKX.Radome
 	public class TCPClientNetworkManager<PlayerInfo> : ClientNetworkManagerBase<short, PlayerInfo> where PlayerInfo : DefaultPlayerInfo, new()
 	{
 		private static List<TCPClientNetworkManager<PlayerInfo>> _TcpClients = new List<TCPClientNetworkManager<PlayerInfo>>();
-
-		protected const int StateBufferSize = ushort.MaxValue;
-		protected const int MaxRecievePacketSize = 2048;
-
+		
 		private byte ManagerId;
 
 		public IPEndPoint IPEndPoint { get; private set; }
