@@ -111,10 +111,7 @@ namespace ICKX.Radome
 				return;
 			}
 
-			IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
-			IPAddress ipAddress = ipHostInfo.AddressList.First(a=>a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().Contains("169"));
-			IPEndPoint = new IPEndPoint(ipAddress, port);
-
+			IPEndPoint = new IPEndPoint(IPAddress.Any, port);
 			ListenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 			ListenerSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 			

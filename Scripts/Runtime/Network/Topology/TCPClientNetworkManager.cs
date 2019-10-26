@@ -74,10 +74,7 @@ namespace ICKX.Radome
 			Debug.Log(adress);
 			if (adress.ToString().Contains("169.254"))
 			{
-				IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
-				IPAddress ipAddress = ipHostInfo.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().Contains("169"));
-				IPEndPoint = new IPEndPoint(ipAddress, port);
-				//IPEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), port);
+				IPEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), port);
 			}
 			else
 			{
@@ -600,7 +597,7 @@ namespace ICKX.Radome
 						{
 							var c = new DataStreamReader.Context();
 							Debug.Log("BugPacketDump : " + string.Join(", ", stream.ReadBytesAsArray(ref c, stream.Length)));
-							continue;
+							break;
 						}
 
 						var packet = stream.ReadChunk(ref ctx, tcpPacketSize);
