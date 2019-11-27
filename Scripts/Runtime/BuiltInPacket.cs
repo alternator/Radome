@@ -26,6 +26,7 @@ namespace ICKX.Radome {
             BehaviourRpc,
 
 			DataTransporter,
+			SyncPhase,
         }
     }
 }

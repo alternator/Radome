@@ -9,19 +9,52 @@ using UnityEditor.SceneManagement;
 
 namespace ICKX.Radome {
 
-    [RequireComponent (typeof (RecordableIdentity))]
-    public abstract class RecordableBehaviour : MonoBehaviour {
+	public interface IRecordableComponent
+	{
+		bool HasAuthor { get; }
+		byte ComponentIndex { get; }
 
+		RecordableIdentity CacheRecordableIdentity { get; }
+
+		/// <summary>
+		/// 初期化
+		/// </summary>
+		void Initialize();
+
+		/// <summary>
+		/// [内部処理専用] componentIndexをセットする
+		/// </summary>
+		void SetComponentIndex(byte index);
+
+		/// <summary>
+		/// Rpcパケットを受信する
+		/// </summary>
+		void OnRecieveRpcPacket(ushort senderPlayerId, byte methodId, DataStreamReader rpcPacket, DataStreamReader.Context ctx);
+
+		/// <summary>
+		/// 変数を同期するパケットに書き込む
+		/// </summary>
+		void WriteSyncVarPacket(ref DataStreamWriter syncPacket);
+
+		/// <summary>
+		/// 変数を同期するパケットを読み込み反映する
+		/// </summary>
+		void ReadSyncVarPacket(ref DataStreamReader syncPacket, ref DataStreamReader.Context ctx);
+	}
+
+	[RequireComponent (typeof (RecordableIdentity))]
+    public abstract class RecordableBehaviour : MonoBehaviour, IRecordableComponent
+	{
         [Disable]
         [SerializeField]
-        private byte m_componentIndex = 255;
+        private byte m_ComponentIndex = 255;
 
-        public bool hasAuthor { get { return cacheRecordableIdentity.hasAuthority; } }
-        public byte componentIndex { get { return m_componentIndex; } internal set { m_componentIndex = value; } }
+        public bool HasAuthor { get { return CacheRecordableIdentity.hasAuthority; } }
+        public byte ComponentIndex { get { return m_ComponentIndex; } }
 
-        private bool isInitialized = false;
+		protected bool _IsInitialized = false;
 
-        public RecordableIdentity cacheRecordableIdentity { get; private set; }
+        public RecordableIdentity CacheRecordableIdentity { get; private set; }
 
 #if UNITY_EDITOR
         protected void Reset () {
@@ -33,22 +66,29 @@ namespace ICKX.Radome {
             Initialize ();
         }
 
-        internal virtual void Initialize () {
-            if (isInitialized) return;
-            isInitialized = true;
+        public virtual void Initialize () {
+            if (_IsInitialized) return;
+            _IsInitialized = true;
 
-            cacheRecordableIdentity = GetComponent<RecordableIdentity> ();
-            if (m_componentIndex == 255) {
-                m_componentIndex = cacheRecordableIdentity.AddRecordableBehaviour (this);
+            CacheRecordableIdentity = GetComponent<RecordableIdentity> ();
+			CacheRecordableIdentity.Initialize();
+			if (m_ComponentIndex == 255) {
+                m_ComponentIndex = CacheRecordableIdentity.AddRecordableComponent (this);
             }
         }
 
+		public void SetComponentIndex (byte index)
+		{
+			m_ComponentIndex = index;
+		}
+
 #if UNITY_EDITOR
-        private void ResetComponentIndex () {
-            var components = GetComponents<RecordableBehaviour> ();
+		private void ResetComponentIndex () {
+            var components = GetComponents<IRecordableComponent> ();
             for (byte i = 0; i < components.Length; i++) {
-                components[i].m_componentIndex = i;
-                EditorUtility.SetDirty (components[i]);
+                components[i].SetComponentIndex(i);
+				var c = components[i] as MonoBehaviour;
+				EditorUtility.SetDirty (c);
             }
             if (!Application.isPlaying) {
                 EditorSceneManager.MarkSceneDirty (gameObject.scene);
@@ -60,14 +100,14 @@ namespace ICKX.Radome {
         /// 指定したPlayerIDのリモートインスタンスにパケットを送信
         /// </summary>
         protected void SendRpc (ushort targetPlayerId, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important = true) {
-            cacheRecordableIdentity.SendRpc (targetPlayerId, componentIndex, methodId, rpcPacket, qosType, important);
+            CacheRecordableIdentity.SendRpc (targetPlayerId, ComponentIndex, methodId, rpcPacket, qosType, important);
         }
 
         /// <summary>
         /// 全クライアントのリモートインスタンスにパケットを送信
         /// </summary>
         protected void BrodcastRpc (byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important = true) {
-            cacheRecordableIdentity.BrodcastRpc (componentIndex, methodId, rpcPacket, qosType, important);
+            CacheRecordableIdentity.BrodcastRpc (ComponentIndex, methodId, rpcPacket, qosType, important);
         }
 
         /// <summary>

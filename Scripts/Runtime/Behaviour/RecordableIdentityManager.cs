@@ -38,7 +38,7 @@ namespace ICKX.Radome {
 		}
 
 		public static uint progressTimeSinceStartup {
-			get { return GamePacketManager.progressTimeSinceStartup; }
+			get { return GamePacketManager.ProgressTimeSinceStartup; }
 		}
 
 		protected void Awake () {
@@ -116,6 +116,20 @@ namespace ICKX.Radome {
 					packet.Write ((byte)BuiltInPacket.Type.ReserveNetId);
 					GamePacketManager.Send (0, packet, QosType.Reliable);
 				}
+			}
+		}
+
+		public static ushort ReserveNetIdForHost ()
+		{
+			if (GamePacketManager.IsLeader)
+			{
+				ushort count = (ushort)Instance.m_identityList.Count;
+				Instance.m_identityList.Add(null);
+				return count;
+			}
+			else
+			{
+				throw new System.NotImplementedException();
 			}
 		}
 

@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using Unity.Burst;
+//using Unity.Burst;
 using Unity.Networking.Transport.LowLevel.Unsafe;
 using Unity.Networking.Transport.Protocols;
 using Unity.Collections;
@@ -154,7 +154,7 @@ namespace Unity.Networking.Transport
             NativeBindings.network_terminate();
         }
 
-        [BurstCompile]
+        //[BurstCompile]
         struct ReceiveJob<T> : IJob where T : struct, INetworkPacketReceiver
         {
             public T receiver;
@@ -308,7 +308,7 @@ namespace Unity.Networking.Transport
             m_IPCQueue.Dispose();
         }
 
-        [BurstCompile]
+        //[BurstCompile]
         struct SendUpdate : IJob
         {
             public IPCManager ipcManager;
@@ -320,7 +320,7 @@ namespace Unity.Networking.Transport
             }
         }
 
-        [BurstCompile]
+        //[BurstCompile]
         struct ReceiveJob<T> : IJob where T : struct, INetworkPacketReceiver
         {
             public T receiver;

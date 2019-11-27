@@ -77,10 +77,26 @@ namespace ICKX.Radome {
 
 		public static ushort PlayerId {
 			get {
-				if(NetworkManager == null) {
+				if (NetworkManager == null)
+				{
 					return 0;
-				}else {
+				}
+				else
+				{
 					return NetworkManager.MyPlayerId;
+				}
+			}
+		}
+
+		public static ulong UniqueId {
+			get {
+				if (NetworkManager == null || NetworkManager.MyPlayerInfo == null)
+				{
+					return 0;
+				}
+				else
+				{
+					return NetworkManager.MyPlayerInfo.UniqueId;
 				}
 			}
 		}
@@ -97,23 +113,36 @@ namespace ICKX.Radome {
 			}
 		}
 
-		public static long currentUnixTime { get; private set; }
+		public static long CurrentUnixTime { get; private set; }
 
-		public static uint progressTimeSinceStartup {
-			get { return (uint)(currentUnixTime - LeaderStartTime); }
+		public static uint ProgressTimeSinceStartup {
+			get { return (uint)(CurrentUnixTime - LeaderStartTime); }
+		}
+
+		public static NetworkConnection.State NetworkState {
+			get {
+				if (NetworkManager == null)
+				{
+					return NetworkConnection.State.Disconnected;
+				}
+				else
+				{
+					return NetworkManager.NetworkState;
+				}
+			}
 		}
 
 		private static void Update() {
-			currentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+			CurrentUnixTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 		}
 
 		public static ushort GetPlayerCount () {
 			return (NetworkManager == null) ? (ushort)0 : NetworkManager.GetPlayerCount () ;
 		}
 
-        public static IReadOnlyList<DefaultPlayerInfo> PlayerInfoList {
-            get { return NetworkManager != null ? NetworkManager.PlayerInfoList : null ; }
-        }
+        //public static IReadOnlyList<DefaultPlayerInfo> PlayerInfoList {
+        //    get { return NetworkManager != null ? NetworkManager.ActivePlayerInfoTable : null ; }
+        //}
 
 		public bool IsActivePlayerId (ushort playerId) {
 			return NetworkManager.IsActivePlayerId (playerId);
@@ -168,17 +197,17 @@ namespace ICKX.Radome {
 		}
 
 		public static void Send (ushort playerId, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Send (playerId, data, qos);
 		}
 
 		public static void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Multicast (playerIdList, data, qos);
 		}
 
 		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
-			if (NetworkManager == null || NetworkManager.NetwrokState == NetworkConnection.State.Disconnected) return;
+			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Broadcast (data, qos, noChunk);
 		}
 
