@@ -73,6 +73,7 @@ namespace ICKX.Radome {
 
 			int hash = FileToHash (fileStream);
 			var transporter = new FileTransporter (hash, fileName, fileStream, SendBytePerFrame, 0);
+			transporter.targetPlayerId = playerId;
 			var task = SendRoutine(fileStream, transporter, fileName);
 
 			return hash;
@@ -101,7 +102,15 @@ namespace ICKX.Radome {
 						writer.Write((int)fileStream.Length);
 						writer.Write((ushort)dataSize);
 						writer.WriteBytes(dataPtr, dataSize);
-						NetworkManager.Broadcast(writer, QosType.Reliable, true);
+
+						if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+						{
+							NetworkManager.Broadcast(writer, QosType.Reliable, true);
+						}
+						else
+						{
+							NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+						}
 					}
 				}
 			}
@@ -157,7 +166,15 @@ namespace ICKX.Radome {
 								writer.Write ((byte)flag);
 								//writer.Write ((ushort)dataSize);
 								writer.WriteBytes (dataPtr, dataSize);
-								NetworkManager.Broadcast (writer, QosType.Reliable, true);
+
+								if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+								{
+									NetworkManager.Broadcast(writer, QosType.Reliable, true);
+								}
+								else
+								{
+									NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+								}
 							}
 						}
 					}

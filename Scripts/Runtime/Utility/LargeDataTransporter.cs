@@ -17,6 +17,7 @@ namespace ICKX.Radome {
 	}
 
 	public abstract class TransporterBase {
+		public ushort targetPlayerId  { get; internal set; }
 		public int hash { get; internal set; }
 		internal int pos;
 
@@ -82,14 +83,22 @@ namespace ICKX.Radome {
 			return _sendTransporterTable.ContainsKey(hash);
 		}
 
-		public bool SendCancel(int hash) {
+		public bool SendCancel(int hash, ushort playerId) {
 			if (_sendTransporterTable.Remove(hash)) {
 				using (var writer = new DataStreamWriter(7, Allocator.Temp)) {
 					writer.Write((byte)BuiltInPacket.Type.DataTransporter);
 					writer.Write((byte)TransporterType.File);
 					writer.Write(hash);
 					writer.Write((byte)FlagDef.Cancel);
-					NetworkManager.Broadcast(writer, QosType.Reliable, true);
+
+					if (playerId == NetworkLinkerConstants.BroadcastId)
+					{
+						NetworkManager.Broadcast(writer, QosType.Reliable, true);
+					}
+					else
+					{
+						NetworkManager.Send(playerId, writer, QosType.Reliable);
+					}
 				}
 				return true;
 			} else {

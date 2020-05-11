@@ -70,7 +70,15 @@ namespace ICKX.Radome {
 						writer.Write (name);
 						writer.Write (data.Length);
 						writer.WriteBytes (dataPtr, dataSize);
-						NetworkManager.Broadcast (writer, QosType.Reliable, true);
+
+						if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+						{
+							NetworkManager.Broadcast(writer, QosType.Reliable, true);
+						}
+						else
+						{
+							NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+						}
 					}
 				}
 			}
@@ -112,7 +120,15 @@ namespace ICKX.Radome {
 								writer.Write (transporter.hash);
 								writer.Write ((byte)flag);
 								writer.WriteBytes (dataPtr, dataSize);
-								NetworkManager.Broadcast (writer, QosType.Reliable, true);
+
+								if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+								{
+									NetworkManager.Broadcast(writer, QosType.Reliable, true);
+								}
+								else
+								{
+									NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+								}
 							}
 						}
 					}
