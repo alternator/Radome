@@ -56,7 +56,8 @@ namespace ICKX.Radome {
 
 			int hash = ByteToHash (data);
 			var transporter = new LargeBytesTransporter (hash, data);
-            transporter.name = name;
+			transporter.targetPlayerId = playerId;
+			transporter.name = name;
 
             int nameByteCount = DataStreamWriter.GetByteSizeStr (name);
 			int dataSize = NetworkLinkerConstants.MaxPacketSize - HeaderSize - 13 - nameByteCount;
