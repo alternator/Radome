@@ -249,7 +249,6 @@ namespace ICKX.Radome
 				}
 				else if (cmd == NetworkEvent.Type.Data)
 				{
-					//Debug.Log($"driver.PopEvent={cmd} con={connId.InternalId} : {stream.Length}");
 					if (!stream.IsCreated)
 					{
 						continue;
@@ -258,6 +257,13 @@ namespace ICKX.Radome
 					var ctx = new DataStreamReader.Context();
 					byte qos = stream.ReadByte(ref ctx);
 					ushort targetPlayerId = stream.ReadUShort(ref ctx);
+					
+					if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+					{
+						ushort multiCastCount = stream.ReadUShort(ref ctx);
+						for (int i = 0; i < multiCastCount; i++) stream.ReadUShort(ref ctx);
+					}
+
 					ushort senderPlayerId = stream.ReadUShort(ref ctx);
 
 					GetUniqueIdByPlayerId(senderPlayerId, out ulong uniqueId);
@@ -273,10 +279,10 @@ namespace ICKX.Radome
 						var ctx2 = new DataStreamReader.Context();
 						byte type = chunk.ReadByte(ref ctx2);
 
-						//if(type != (byte)BuiltInPacket.Type.MeasureRtt)
+						//if (type != (byte)BuiltInPacket.Type.MeasureRtt && type == 1)
 						//{
-						//    var c = new DataStreamReader.Context();
-						//    Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
+						//	var c = new DataStreamReader.Context();
+						//	Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
 						//}
 
 						DeserializePacket(ServerConnId, uniqueId, type, ref chunk, ref ctx2);
@@ -403,6 +409,17 @@ namespace ICKX.Radome
 
 						temp.Write(qos);
 						temp.Write(targetPlayerId);
+
+						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+						{
+							temp.Write((ushort)multiCastList.Length);
+							for (int i = 0; i < multiCastList.Length; i++)
+							{
+								temp.Write(multiCastList[i]);
+								//Debug.Log("send multiCastList : " + multiCastList[i]);
+							}
+						}
+
 						temp.Write(senderPlayerId);
 						temp.Write(packetDataLen);
 						temp.WriteBytes(packetPtr, packetDataLen);

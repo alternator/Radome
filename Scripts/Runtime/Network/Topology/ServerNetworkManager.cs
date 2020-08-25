@@ -384,6 +384,7 @@ namespace ICKX.Radome
 							{
 								multiCastList.Add(reader.ReadUShort(ref ctx));
 							}
+							//Debug.Log($"{(QosType)qos} {string.Join(",", multiCastList.ToArray())}");
 						}
 
 						ushort packetDataLen = reader.ReadUShort(ref ctx);
@@ -394,6 +395,16 @@ namespace ICKX.Radome
 
 						temp.Write(qos);
 						temp.Write(targetPlayerId);
+
+						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+						{
+							temp.Write((ushort)multiCastList.Length);
+							for (ushort i = 0; i < multiCastList.Length; i++)
+							{
+								temp.Write((ushort)multiCastList[i]);
+							}
+						}
+
 						temp.Write(serverPlayerId);
 						temp.Write(packetDataLen);
 						temp.WriteBytes(packetPtr, packetDataLen);
@@ -404,7 +415,7 @@ namespace ICKX.Radome
 							{
 								if (i == serverPlayerId) continue;
 								if (i >= connections.Length) continue;
-								if (connections[i] >= networkConnections.Length) continue;
+								if (connections[i] == -1 || connections[i] >= networkConnections.Length) continue;
 								var connection = networkConnections[connections[i]];
 								connection.Send(driver, qosPipelines[qos], temp);
 								//Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
@@ -414,19 +425,16 @@ namespace ICKX.Radome
 						{
 							for (ushort i = 0; i < multiCastList.Length; i++)
 							{
-								if (multiCastList[i] < connections.Length)
-								{
-									if (multiCastList[i] >= connections.Length) continue;
-									if (connections[multiCastList[i]] >= networkConnections.Length) continue;
-									var connection = networkConnections[connections[multiCastList[i]]];
-									connection.Send(driver, qosPipelines[qos], temp);
-									//Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
-								}
+								//if (multiCastList[i] >= connections.Length) continue;
+								if (connections[multiCastList[i]] == -1 || connections[multiCastList[i]] >= networkConnections.Length) continue;
+								var connection = networkConnections[connections[multiCastList[i]]];
+								connection.Send(driver, qosPipelines[qos], temp);
+								//Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
 							}
 						}
 						else
 						{
-							if (connections[targetPlayerId] >= networkConnections.Length) continue;
+							if (connections[targetPlayerId] == -1 || connections[targetPlayerId] >= networkConnections.Length) continue;
 							var connection = networkConnections[connections[targetPlayerId]];
 							connection.Send(driver, qosPipelines[qos], temp);
 							//Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
@@ -567,12 +575,6 @@ namespace ICKX.Radome
 						var ctx = new DataStreamReader.Context();
 						byte qos = stream.ReadByte(ref ctx);
 						ushort targetPlayerId = stream.ReadUShort(ref ctx);
-						ushort senderPlayerId = stream.ReadUShort(ref ctx);
-
-						var ctx2 = ctx;
-						byte type = stream.ReadByte(ref ctx2);
-
-						//if (type == (byte)BuiltInPacket.Type.MeasureRtt) continue;
 
 						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
 						{
@@ -583,6 +585,11 @@ namespace ICKX.Radome
 								multiCastList.Add(stream.ReadUShort(ref ctx));
 							}
 						}
+
+						ushort senderPlayerId = stream.ReadUShort(ref ctx);
+						var ctx2 = ctx;
+						byte type = stream.ReadByte(ref ctx2);
+						//if (type == (byte)BuiltInPacket.Type.MeasureRtt) continue;
 
 						if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
 						{
@@ -602,10 +609,12 @@ namespace ICKX.Radome
 							{
 								if (multiCastList[i] == serverPlayerId)
 								{
+									//Debug.Log("recieve multiCast Server : " + multiCastList[i] + " / " + senderPlayerId);
 									PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
 								}
 								else
 								{
+									//Debug.Log("recieve multiCastList : " + multiCastList[i] + " / " + connections[multiCastList[i]]);
 									if (senderPlayerId != multiCastList[i])
 									{
 										RelayPacket(multiCastList[i], stream, qos);
@@ -644,8 +653,8 @@ namespace ICKX.Radome
 
 					//if (type != (byte)BuiltInPacket.Type.MeasureRtt)
 					//{
-					//    var c = new DataStreamReader.Context();
-					//    Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
+					//	var c = new DataStreamReader.Context();
+					//	Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
 					//}
 
 					dataStream.Add(new DataPacket() { Connection = con, Chunk = chunk });
@@ -654,6 +663,8 @@ namespace ICKX.Radome
 
 			private unsafe void RelayPacket(ushort targetPlayerId, DataStreamReader stream, byte qos)
 			{
+				if (connections[targetPlayerId] == -1) return;
+
 				relayWriter.Clear();
 				relayWriter.WriteBytes(stream.GetUnsafeReadOnlyPtr(), stream.Length);
 				var connection = networkConnections[connections[targetPlayerId]];

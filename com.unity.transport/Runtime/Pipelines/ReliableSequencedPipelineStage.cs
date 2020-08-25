@@ -84,7 +84,7 @@ namespace Unity.Networking.Transport
 
 				if (inboundBuffer.buffer1.Length > 0)
 				{
-					UnityEngine.Debug.Log("Send 1");
+					//UnityEngine.Debug.Log("Send 1");
 					reliable->LastSentTime = ctx.timestamp;
 
 					ReliableUtility.Write(ctx, inboundBuffer, ref header);
@@ -98,7 +98,7 @@ namespace Unity.Networking.Transport
 
 				if (reliable->Resume != ReliableUtility.NullEntry)
 				{
-					UnityEngine.Debug.Log("Send 2");
+					//UnityEngine.Debug.Log("Send 2");
 					reliable->LastSentTime = ctx.timestamp;
 					var slice = ReliableUtility.ResumeSend(ctx, out header, ref needsResume);
 					ctx.header.Clear();
@@ -111,7 +111,7 @@ namespace Unity.Networking.Transport
 
 				if (ReliableUtility.ShouldSendAck(ctx))
 				{
-					UnityEngine.Debug.Log("Send 3" );
+					//UnityEngine.Debug.Log("Send 3" );
 					reliable->LastSentTime = ctx.timestamp;
 
 					ReliableUtility.WriteAckPacket(ctx, ref header);

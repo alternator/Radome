@@ -230,7 +230,7 @@ namespace Unity.Networking.Transport.Utilities
 
 			var offset = ctx->DataPtrOffset + (index * ctx->DataStride);
 			void* dataPtr = (ptr + offset);
-			UnityEngine.Debug.Log("UnsafeUtility.MemCpy");
+			//UnityEngine.Debug.Log("UnsafeUtility.MemCpy");
 			UnsafeUtility.MemCpy(dataPtr, data, length);
 		}
 
