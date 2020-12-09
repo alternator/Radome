@@ -17,6 +17,7 @@ namespace ICKX.Radome {
 	}
 
 	public abstract class TransporterBase {
+		public ushort targetPlayerId  { get; internal set; }
 		public int hash { get; internal set; }
 		internal int pos;
 
@@ -82,14 +83,22 @@ namespace ICKX.Radome {
 			return _sendTransporterTable.ContainsKey(hash);
 		}
 
-		public bool SendCancel(int hash) {
+		public bool SendCancel(int hash, ushort playerId) {
 			if (_sendTransporterTable.Remove(hash)) {
 				using (var writer = new DataStreamWriter(7, Allocator.Temp)) {
 					writer.Write((byte)BuiltInPacket.Type.DataTransporter);
 					writer.Write((byte)TransporterType.File);
 					writer.Write(hash);
 					writer.Write((byte)FlagDef.Cancel);
-					NetworkManager.Brodcast(writer, QosType.Reliable, true);
+
+					if (playerId == NetworkLinkerConstants.BroadcastId)
+					{
+						NetworkManager.Broadcast(writer, QosType.Reliable, true);
+					}
+					else
+					{
+						NetworkManager.Send(playerId, writer, QosType.Reliable);
+					}
 				}
 				return true;
 			} else {
@@ -111,7 +120,7 @@ namespace ICKX.Radome {
 			return System.BitConverter.ToInt32 (crypto256.ComputeHash (fs), 0);
 		}
 
-		private void OnRecievePacketMethod (ushort senderPlayerId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
+		private void OnRecievePacketMethod (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
 			if (type == (byte)BuiltInPacket.Type.DataTransporter) {
 				var transType = stream.ReadByte (ref ctx);
 				if (transType != Type) return;
@@ -125,21 +134,28 @@ namespace ICKX.Radome {
 
 				Transporter transporter;
 				if(isCancel) {
-					transporter = _recieveTransporterTable[hash];
-					_recieveTransporterTable.Remove (hash);
-					ExecOnRecieveComplete(transporter, false);
-				}else if (isStart) {
+                    if (_recieveTransporterTable.TryGetValue(hash, out transporter))
+                    {
+                        _recieveTransporterTable.Remove(hash);
+                        ExecOnRecieveComplete(transporter, false);
+                    }
+                }
+                else if (isStart) {
 					transporter = RecieveStart (hash, stream, ref ctx);
 					transporter.hash = hash;
 					_recieveTransporterTable[hash] = transporter;
 					OnRecieveStart?.Invoke (transporter);
-				} else {
-					transporter = _recieveTransporterTable[hash];
-					RecieveFragmentData (hash, stream, ref ctx, transporter);
-					if (isComplete) {
-						_recieveTransporterTable.Remove (hash);
-						RecieveComplete (hash, transporter);
-					}
+				} else
+                {
+                    if (_recieveTransporterTable.TryGetValue(hash, out transporter))
+                    {
+                        RecieveFragmentData(hash, stream, ref ctx, transporter);
+                        if (isComplete)
+                        {
+                            _recieveTransporterTable.Remove(hash);
+                            RecieveComplete(hash, transporter);
+                        }
+                    }
 				}
 			}
 		}

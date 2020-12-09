@@ -69,7 +69,7 @@ public class LocalNetworkDiscovery : MonoBehaviour {
 		var endpoint = new IPEndPoint (IPAddress.Broadcast, broadcastPort);
 		client = new UdpClient ();
 		client.Connect (endpoint);
-		Debug.Log ("Broadcast StartHost");
+		Debug.Log ("Broadcast StartHost : " + m_broadcastKey);
 
 		unsafe {
 			int strByteCount = DataStreamWriter.GetByteSizeStr (m_broadcastData);
@@ -108,13 +108,16 @@ public class LocalNetworkDiscovery : MonoBehaviour {
 
 		client = new UdpClient (broadcastPort);
 
-		Debug.Log ("Broadcast StartClient");
 		while (true) {
 			if (isStarted) {
+				Debug.Log("Broadcast StartClient");
+
 				var result = await client.ReceiveAsync ();
 				var responseBytes = result.Buffer;
 
 				if (responseBytes == null || responseBytes.Length == 0) continue;
+
+				Debug.Log(string.Join(",", responseBytes));
 
 				using (var writer = new DataStreamWriter (responseBytes.Length, Allocator.Temp)) {
 					unsafe {
@@ -126,12 +129,13 @@ public class LocalNetworkDiscovery : MonoBehaviour {
 							var key = reader.ReadInt (ref ctx);
 							var version = reader.ReadInt (ref ctx);
 
-							if (key != m_broadcastKey) return;
-							if (version != m_broadcastVersion) return;
+							Debug.Log("OnReciveBroadcast key=" + key + ", version=" + version + "time=" + Time.time);
+							if (key != m_broadcastKey) continue;
+							if (version != m_broadcastVersion) continue;
 
 							var str = reader.ReadString(ref ctx);
 
-							//Debug.Log ("OnReciveBroadcast key=" + key + ", version=" + version + ", str=" + str + "time=" + Time.time);
+							Debug.Log ("OnReciveBroadcast Succcess key=" + key + ", version=" + version + ", str=" + str + "time=" + Time.time);
 							OnReciveBroadcast?.Invoke (result.RemoteEndPoint, key, version, str);
 							//Stop ();
 						}

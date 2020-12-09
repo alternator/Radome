@@ -226,7 +226,7 @@ namespace ICKX.Radome {
 			EditorSceneManager.MarkSceneDirty (gameObject.scene);
 		}
 
-		[MenuItem ("ICKX/Network/AssignNetIDAll")]
+		[MenuItem ("Tools/ICKX/Network/AssignNetIDAll")]
 		private static void AssignNetIDAll () {
 			foreach (var sceneIdentity in FindObjectsOfType<RecordableSceneIdentity>()) {
 				sceneIdentity.ResetIdentitys ();

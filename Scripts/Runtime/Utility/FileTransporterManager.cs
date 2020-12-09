@@ -66,13 +66,14 @@ namespace ICKX.Radome {
 		
 		public int Send (ushort playerId, string fileName, System.IO.FileStream fileStream) {
 
-			if (fileStream.Length <= NetworkParameterConstants.MTU - HeaderSize) {
+			if (fileStream.Length <= NetworkLinkerConstants.MaxPacketSize - HeaderSize) {
 				Debug.LogError ("MTU以下のサイズのデータは送れません");
 				return 0;
 			}
 
 			int hash = FileToHash (fileStream);
 			var transporter = new FileTransporter (hash, fileName, fileStream, SendBytePerFrame, 0);
+			transporter.targetPlayerId = playerId;
 			var task = SendRoutine(fileStream, transporter, fileName);
 
 			return hash;
@@ -83,7 +84,7 @@ namespace ICKX.Radome {
 			fileStream.Seek(0, SeekOrigin.Begin);
 
 			int nameByteCount = DataStreamWriter.GetByteSizeStr(fileName);
-			int dataSize = NetworkParameterConstants.MTU - HeaderSize - 15 - nameByteCount;
+			int dataSize = NetworkLinkerConstants.MaxPacketSize - HeaderSize - 15 - nameByteCount;
 			int readSize = await fileStream.ReadAsync(transporter.buffer, 0, dataSize);
 			//Debug.Log ("Start : " + string.Join ("", transporter.buffer));
 
@@ -101,7 +102,15 @@ namespace ICKX.Radome {
 						writer.Write((int)fileStream.Length);
 						writer.Write((ushort)dataSize);
 						writer.WriteBytes(dataPtr, dataSize);
-						NetworkManager.Brodcast(writer, QosType.Reliable, true);
+
+						if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+						{
+							NetworkManager.Broadcast(writer, QosType.Reliable, true);
+						}
+						else
+						{
+							NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+						}
 					}
 				}
 			}
@@ -141,7 +150,7 @@ namespace ICKX.Radome {
 				while (sendAmount < SendBytePerFrame) {
 					//Debug.Log ("sendAmount=" + sendAmount + ", readSize" + readSize + ", pos" + transporter.pos);
 					FlagDef flag = FlagDef.None;
-					int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkParameterConstants.MTU - HeaderSize - 7);
+					int dataSize = Mathf.Min (SendBytePerFrame - sendAmount, NetworkLinkerConstants.MaxPacketSize - HeaderSize - 7);
 
 					if (transporter.pos + dataSize > transporter.fileStream.Length) {
 						flag = FlagDef.Complete;
@@ -157,7 +166,15 @@ namespace ICKX.Radome {
 								writer.Write ((byte)flag);
 								//writer.Write ((ushort)dataSize);
 								writer.WriteBytes (dataPtr, dataSize);
-								NetworkManager.Brodcast (writer, QosType.Reliable, true);
+
+								if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
+								{
+									NetworkManager.Broadcast(writer, QosType.Reliable, true);
+								}
+								else
+								{
+									NetworkManager.Send(transporter.targetPlayerId, writer, QosType.Reliable);
+								}
 							}
 						}
 					}

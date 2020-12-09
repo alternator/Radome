@@ -1,6 +1,4 @@
 using System;
-using System.Net;
-using Unity.Collections;
 using Unity.Jobs;
 
 namespace Unity.Networking.Transport
@@ -11,20 +9,21 @@ namespace Unity.Networking.Transport
     /// </summary>
     public interface INetworkDriver : IDisposable
     {
-		bool IsCreated { get; }
+        // :: Driver Helpers
 
-		// :: Driver Helpers
-		/// <summary>
-		/// Schedule a job to update the state of the NetworkDriver, read messages and events from the underlying
-		/// network interface and populate the event queues to allow reading from connections concurrently.
-		/// </summary>
-		/// <param name="dep">
-		/// Used to chain dependencies for jobs.
-		/// </param>
-		/// <returns>
-		/// A <see cref="JobHandle"/> for the ScheduleUpdate Job.
-		/// </returns>
-		JobHandle ScheduleUpdate(JobHandle dep = default(JobHandle));
+        bool IsCreated { get; }
+
+        /// <summary>
+        /// Schedule a job to update the state of the NetworkDriver, read messages and events from the underlying
+        /// network interface and populate the event queues to allow reading from connections concurrently.
+        /// </summary>
+        /// <param name="dep">
+        /// Used to chain dependencies for jobs.
+        /// </param>
+        /// <returns>
+        /// A <see cref="JobHandle"/> for the ScheduleUpdate Job.
+        /// </returns>
+        JobHandle ScheduleUpdate(JobHandle dep = default(JobHandle));
 
         /// <summary>
         /// Enable listening for incoming connections on this driver. Before calling this
@@ -34,6 +33,8 @@ namespace Unity.Networking.Transport
         /// Returns 0 on Success.
         /// </returns>
         int Listen();
+        bool Listening { get; }
+
 
         /// <summary>
         /// Accept a pending connection attempt and get the established connection.
@@ -45,6 +46,14 @@ namespace Unity.Networking.Transport
         /// if there where no more new NetworkConnections to accept.
         /// </returns>
         NetworkConnection Accept();
+
+        /// <summary>
+        /// Establish a new connection to a server with a specific address and port.
+        /// </summary>
+        /// <param name="endpoint">
+        /// A valid NetworkEndPoint, can be implicitly cast using an System.Net.IPEndPoint
+        /// </param>
+        NetworkConnection Connect(NetworkEndPoint endpoint);
 
         /// <summary>
         /// Disconnect an existing connection.
@@ -59,6 +68,14 @@ namespace Unity.Networking.Transport
         /// </summary>
         NetworkConnection.State GetConnectionState(NetworkConnection con);
 
+        /// <summary>
+        /// Create a pipeline which can be used to process data packets sent and received by the transport package.
+        /// The pipelines must be created in the same order on the client and server since they are identified by
+        /// an index which is assigned on creation.
+        /// All pipelines must be created before the first connection is established.
+        /// </summary>
+        NetworkPipeline CreatePipeline(params Type[] stages);
+
         // :: Events
         /// <summary>
         /// Send a message to the specific connection.
@@ -72,12 +89,12 @@ namespace Unity.Networking.Transport
         /// <returns>
         /// Returns the size in bytes that was sent, -1 on failure.
         /// </returns>
-        int Send(NetworkConnection con, DataStreamWriter strm);
+        int Send(NetworkPipeline pipe, NetworkConnection con, DataStreamWriter strm);
 
         /// <summary>
         /// Send a message to the specific connection.
         /// </summary>
-        int Send(NetworkConnection con, IntPtr data, int len);
+        int Send(NetworkPipeline pipe, NetworkConnection con, IntPtr data, int len);
 
         /// <summary>
         /// Receive an event for any connection.

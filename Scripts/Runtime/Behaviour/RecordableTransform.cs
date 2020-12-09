@@ -62,7 +62,7 @@ namespace ICKX.Radome {
 			}
 		}
 
-		private void OnRegisterPlayer(ushort id) {
+		private void OnRegisterPlayer(ushort id, ulong uniqueId) {
 			//接続した直後は必ずPacketを受け取る
 			if(id == GamePacketManager.PlayerId)
 			{

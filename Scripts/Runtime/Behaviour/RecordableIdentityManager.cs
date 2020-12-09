@@ -38,7 +38,7 @@ namespace ICKX.Radome {
 		}
 
 		public static uint progressTimeSinceStartup {
-			get { return GamePacketManager.progressTimeSinceStartup; }
+			get { return GamePacketManager.ProgressTimeSinceStartup; }
 		}
 
 		protected void Awake () {
@@ -119,6 +119,20 @@ namespace ICKX.Radome {
 			}
 		}
 
+		public static ushort ReserveNetIdForHost ()
+		{
+			if (GamePacketManager.IsLeader)
+			{
+				ushort count = (ushort)Instance.m_identityList.Count;
+				Instance.m_identityList.Add(null);
+				return count;
+			}
+			else
+			{
+				throw new System.NotImplementedException();
+			}
+		}
+
 		/// <summary>
 		/// ReserveNetIdで確保したNetIDでidentityを登録する
 		/// このメソッド単体でSpawn処理は行わないので、それぞれのclientでIdentityを生成した後で実行すること
@@ -181,7 +195,7 @@ namespace ICKX.Radome {
 			RequestSyncAuthor (identity.sceneHash, identity.netId);
 		}
 
-		private static void OnRecievePacket (ushort senderPlayerId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
+		private static void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
 			switch ((BuiltInPacket.Type)type) {
 				case BuiltInPacket.Type.ReserveNetId:
 					RecieveReserveNetId (senderPlayerId, ref recievePacket, ref ctx);
