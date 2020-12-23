@@ -4,17 +4,18 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Networking.Transport;
-using Unity.Networking.Transport.LowLevel.Unsafe;
 using Unity.Networking.Transport.Utilities;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.Profiling;
 
 namespace ICKX.Radome
 {
 
-	public class UDPServerNetworkManager<PlayerInfo> : ServerNetworkManager<UdpNetworkDriver, PlayerInfo> where PlayerInfo : DefaultPlayerInfo, new()
+	public class UDPServerNetworkManager<PlayerInfo> : ServerNetworkManager<UDPNetworkInterface, PlayerInfo> where PlayerInfo : DefaultPlayerInfo, new()
 	{
 		private NetworkConfigParameter Config;
 
@@ -45,9 +46,9 @@ namespace ICKX.Radome
 
 			if (!NetworkDriver.IsCreated)
 			{
-				NetworkDriver = new UdpNetworkDriver(new INetworkParameter[] {
+				NetworkDriver = new NetworkDriver(new UDPNetworkInterface(), new INetworkParameter[] {
 					Config,
-					new ReliableUtility.Parameters { WindowSize = 128 },
+					new ReliableUtility.Parameters { WindowSize = 32 },
 					new NetworkPipelineParams {initialCapacity = ushort.MaxValue},
                     //new SimulatorUtility.Parameters {MaxPacketSize = 256, MaxPacketCount = 32, PacketDelayMs = 100},
                 });
@@ -93,39 +94,38 @@ namespace ICKX.Radome
 	/// </summary>
 	/// <typeparam name="Driver"></typeparam>
 	/// <typeparam name="PlayerInfo"></typeparam>
-	public abstract class ServerNetworkManager<Driver, PlayerInfo> : ServerNetworkManagerBase<int, PlayerInfo>
-			where Driver : struct, INetworkDriver where PlayerInfo : DefaultPlayerInfo, new()
+	public abstract class ServerNetworkManager<NetInterface, PlayerInfo> : ServerNetworkManagerBase<int, PlayerInfo>
+			where NetInterface : struct, INetworkInterface where PlayerInfo : DefaultPlayerInfo, new()
 	{
 
 		protected override int EmptyConnId => -1;
 
 		public float registrationTimeOut { get; set; } = 60.0f;
 
-		public Driver NetworkDriver;
+		public NetworkDriver NetworkDriver;
 		protected NativeArray<NetworkPipeline> _QosPipelines;
 
 		protected NativeList<NetworkConnection> _ConnectConnIdList;
 		protected NativeList<NetworkConnection> _DisconnectConnIdList;
-		protected DataStreamWriter _RelayWriter;
+
+		protected NativeArray<byte> _RecieveBuffer;
+		protected NativeArray<byte> _RelayBuffer;
+		protected NativeStreamWriter _RecieveBufferWriter;
 		protected NativeList<DataPacket> _RecieveDataStream;
 
 		protected NativeList<NetworkConnection> _NetworkConnections;
 
 		private bool _IsFirstUpdateComplete = false;
 
-		public struct DataPacket
-		{
-			public NetworkConnection Connection;
-			public DataStreamReader Chunk;
-		}
-
 		public ServerNetworkManager(PlayerInfo playerInfo) : base(playerInfo)
 		{
 			_NetworkConnections = new NativeList<NetworkConnection>(4, Allocator.Persistent);
 			_ConnectConnIdList = new NativeList<NetworkConnection>(4, Allocator.Persistent);
 			_DisconnectConnIdList = new NativeList<NetworkConnection>(4, Allocator.Persistent);
-			_RelayWriter = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Persistent);
-			//_RecieveDataStream = new NativeMultiHashMap<int, DataStreamReader>(32, Allocator.Persistent);
+			_RecieveBuffer = new NativeArray<byte>(4096, Allocator.Persistent);
+			_RelayBuffer = new NativeArray<byte>(NetworkParameterConstants.MTU, Allocator.Persistent);
+			_RecieveBufferWriter = new NativeStreamWriter(_RecieveBuffer);
+			//_RecieveDataStream = new NativeMultiHashMap<int, NativeStreamReader>(32, Allocator.Persistent);
 			_RecieveDataStream = new NativeList<DataPacket>(32, Allocator.Persistent);
 
 			_QosPipelines = new NativeArray<NetworkPipeline>((int)QosType.ChunkEnd, Allocator.Persistent);
@@ -145,7 +145,8 @@ namespace ICKX.Radome
 			_NetworkConnections.Dispose();
 			_ConnectConnIdList.Dispose();
 			_DisconnectConnIdList.Dispose();
-			_RelayWriter.Dispose();
+			_RecieveBuffer.Dispose();
+			_RelayBuffer.Dispose();
 			_RecieveDataStream.Dispose();
 
 			if (NetworkDriver.IsCreated)
@@ -196,7 +197,7 @@ namespace ICKX.Radome
 			_NetworkConnections.Clear();
 			_ConnectConnIdList.Clear();
 			_DisconnectConnIdList.Clear();
-			_RelayWriter.Clear();
+			_RecieveBufferWriter.Clear();
 			_RecieveDataStream.Clear();
 
 			NetworkState = NetworkConnection.State.Disconnected;
@@ -205,7 +206,7 @@ namespace ICKX.Radome
 			NetworkState = NetworkConnection.State.Disconnected;
 		}
 
-		protected override void SendToConnIdImmediately(int connId, DataStreamWriter packet, bool reliable)
+		protected override void SendToConnIdImmediately(int connId, NativeStreamWriter packet, bool reliable)
 		{
 		}
 
@@ -222,7 +223,7 @@ namespace ICKX.Radome
 			//job完了待ち
 			JobHandle.Complete();
 
-			_SinglePacketBuffer.Clear();
+			_SinglePacketBufferWriter.Clear();
 			_BroadcastRudpChunkedPacketManager.Clear();
 			_BroadcastUdpChunkedPacketManager.Clear();
 
@@ -245,10 +246,10 @@ namespace ICKX.Radome
 			{
 				connection = _RecieveDataStream[i].Connection;
 				var chunk = _RecieveDataStream[i].Chunk;
-				var ctx = default(DataStreamReader.Context);
-				byte type = chunk.ReadByte(ref ctx);
+				byte type = chunk.ReadByte();
+				//Debug.Log($"TYPE{type}, chunk= {chunk.Length} con {connection.InternalId}");
 				GetUniqueIdByConnId(connection.InternalId, out ulong uniqueId);
-				DeserializePacket(connection.InternalId, uniqueId, type, ref chunk, ref ctx);
+				DeserializePacket(connection.InternalId, uniqueId, type, chunk);
 			}
 
 			_IsFirstUpdateComplete = true;
@@ -282,7 +283,7 @@ namespace ICKX.Radome
 			_BroadcastRudpChunkedPacketManager.WriteCurrentBuffer();
 			_BroadcastUdpChunkedPacketManager.WriteCurrentBuffer();
 			_RecieveDataStream.Clear();
-			
+
 			JobHandle = ScheduleSendPacket(default);
 			JobHandle = NetworkDriver.ScheduleUpdate(JobHandle);
 			JobHandle = ScheduleRecieve(JobHandle);
@@ -293,11 +294,12 @@ namespace ICKX.Radome
 		protected void SendMeasureLatencyPacket()
 		{
 			//Debug.Log("SendMeasureLatencyPacket");
-			using (var packet = new DataStreamWriter(9, Allocator.Temp))
+			using (var array = new NativeArray<byte>(9, Allocator.Temp))
 			{
-				packet.Write((byte)BuiltInPacket.Type.MeasureRtt);
-				packet.Write(GamePacketManager.CurrentUnixTime);
-				
+				var packet = new NativeStreamWriter(array);
+				packet.WriteByte((byte)BuiltInPacket.Type.MeasureRtt);
+				packet.WriteLong(GamePacketManager.CurrentUnixTime);
+
 				Broadcast(packet, QosType.Unreliable, true);
 			}
 		}
@@ -309,9 +311,9 @@ namespace ICKX.Radome
 				driver = NetworkDriver,
 				connections = _ConnectionIdList,
 				networkConnections = _NetworkConnections,
-				singlePacketBuffer = _SinglePacketBuffer,
-				rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBuffer,
-				udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBuffer,
+				singlePacketBuffer = _SinglePacketBufferWriter,
+				rudpPacketBuffer = _BroadcastRudpChunkedPacketManager.ChunkedPacketBufferWriter,
+				udpPacketBuffer = _BroadcastUdpChunkedPacketManager.ChunkedPacketBufferWriter,
 				qosPipelines = _QosPipelines,
 				serverPlayerId = ServerPlayerId,
 			};
@@ -329,27 +331,31 @@ namespace ICKX.Radome
 				qosPipelines = _QosPipelines,
 				connectConnIdList = _ConnectConnIdList,
 				disconnectConnIdList = _DisconnectConnIdList,
-				relayWriter = _RelayWriter,
-				dataStream = _RecieveDataStream,
+				recieveBuffer = _RecieveBufferWriter,
+				relayBuffer = _RelayBuffer,
+				recieveDataStream = _RecieveDataStream,
 				serverPlayerId = ServerPlayerId,
 			};
 			return recievePacketJob.Schedule(jobHandle);
 		}
-
+		
 		struct SendPacketaJob : IJob
 		{
-			public Driver driver;
+			public NetworkDriver driver;
 			[ReadOnly]
-			public NativeList<int> connections;
+			public NativeList<int> connections;		//Key : PlayerId
 			[ReadOnly]
-			public NativeList<NetworkConnection> networkConnections;
+			public NativeList<NetworkConnection> networkConnections;	//Key : connectionId
 
 			[ReadOnly]
-			public DataStreamWriter singlePacketBuffer;
+			[NativeDisableUnsafePtrRestriction]
+			public NativeStreamWriter singlePacketBuffer;
 			[ReadOnly]
-			public DataStreamWriter rudpPacketBuffer;
+			[NativeDisableUnsafePtrRestriction]
+			public NativeStreamWriter rudpPacketBuffer;
 			[ReadOnly]
-			public DataStreamWriter udpPacketBuffer;
+			[NativeDisableUnsafePtrRestriction]
+			public NativeStreamWriter udpPacketBuffer;
 
 			[ReadOnly]
 			public NativeArray<NetworkPipeline> qosPipelines;
@@ -357,173 +363,94 @@ namespace ICKX.Radome
 			[ReadOnly]
 			public ushort serverPlayerId;
 
+			bool IsConnected (ushort playerId)
+			{
+				if (playerId == serverPlayerId) return false;
+				if (playerId >= connections.Length) return false;
+				if (connections[playerId] == -1 || connections[playerId] >= networkConnections.Length) return false;
+				return true;
+			}
+
+			unsafe void SendPacket (ushort playerId, byte qos, ref NativeStreamWriter writer)
+			{
+				var connection = networkConnections[connections[playerId]];
+				var sendWriter = driver.BeginSend(qosPipelines[qos], connection);
+				sendWriter.WriteBytes(writer.GetUnsafePtr(), writer.Length);
+				driver.EndSend(sendWriter);
+				//Debug.Log($"playerId{playerId} : {connection.InternalId} : qos{qos} : Len{writer.Length}");
+			}
+
 			public unsafe void Execute()
 			{
 				var multiCastList = new NativeList<ushort>(Allocator.Temp);
-				var temp = new DataStreamWriter(NetworkParameterConstants.MTU, Allocator.Temp);
+				var tempArray = new NativeArray<byte>(NetworkParameterConstants.MTU, Allocator.Temp);
+				var tempWriter = new NativeStreamWriter(tempArray);
 
 				if (singlePacketBuffer.Length != 0)
 				{
-					var reader = new DataStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
-					var ctx = default(DataStreamReader.Context);
-					while (true)
+					var reader = new NativeStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
+					while(true)
 					{
-						temp.Clear();
+						if (!CreateSingleSendPacket(ref tempWriter, out ushort targetPlayerId, out byte qos, ref reader, multiCastList, serverPlayerId)) break;
 
-						int pos = reader.GetBytesRead(ref ctx);
-						if (pos >= reader.Length) break;
-
-						byte qos = reader.ReadByte(ref ctx);
-						ushort targetPlayerId = reader.ReadUShort(ref ctx);
-
-						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
-						{
-							multiCastList.Clear();
-							ushort multiCastCount = reader.ReadUShort(ref ctx);
-							for (int i = 0; i < multiCastCount; i++)
-							{
-								multiCastList.Add(reader.ReadUShort(ref ctx));
-							}
-							//Debug.Log($"{(QosType)qos} {string.Join(",", multiCastList.ToArray())}");
-						}
-
-						ushort packetDataLen = reader.ReadUShort(ref ctx);
-						if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
-
-						var packet = reader.ReadChunk(ref ctx, packetDataLen);
-						byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
-
-						temp.Write(qos);
-						temp.Write(targetPlayerId);
-
-						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
-						{
-							temp.Write((ushort)multiCastList.Length);
-							for (ushort i = 0; i < multiCastList.Length; i++)
-							{
-								temp.Write((ushort)multiCastList[i]);
-							}
-						}
-
-						temp.Write(serverPlayerId);
-						temp.Write(packetDataLen);
-						temp.WriteBytes(packetPtr, packetDataLen);
-
+						//Debug.Log($"conLen{ connections.Length} ; tempWriter{tempWriter.Length} : targetPlayerId{targetPlayerId} : qos{qos} : Len{reader.GetBytesRead()}");
 						if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
 						{
 							for (ushort i = 0; i < connections.Length; i++)
 							{
-								if (i == serverPlayerId) continue;
-								if (i >= connections.Length) continue;
-								if (connections[i] == -1 || connections[i] >= networkConnections.Length) continue;
-								var connection = networkConnections[connections[i]];
-								connection.Send(driver, qosPipelines[qos], temp);
-								//Debug.Log($"{i} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+								if (IsConnected(i)) SendPacket(i, qos, ref tempWriter);
 							}
 						}
 						else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
 						{
 							for (ushort i = 0; i < multiCastList.Length; i++)
 							{
-								//if (multiCastList[i] >= connections.Length) continue;
-								if (connections[multiCastList[i]] == -1 || connections[multiCastList[i]] >= networkConnections.Length) continue;
-								var connection = networkConnections[connections[multiCastList[i]]];
-								connection.Send(driver, qosPipelines[qos], temp);
-								//Debug.Log($"{multiCastList[i]} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+								if (IsConnected(multiCastList[i])) SendPacket(multiCastList[i], qos, ref tempWriter);
 							}
 						}
 						else
 						{
-							if (connections[targetPlayerId] == -1 || connections[targetPlayerId] >= networkConnections.Length) continue;
-							var connection = networkConnections[connections[targetPlayerId]];
-							connection.Send(driver, qosPipelines[qos], temp);
-							//Debug.Log($"{targetPlayerId} : {connection.InternalId} : qos{qos} : Len{packetDataLen}");
+							if (IsConnected(targetPlayerId)) SendPacket(targetPlayerId, qos, ref tempWriter);
 						}
 					}
 				}
 
-				if (udpPacketBuffer.Length != 0)
+				if (udpPacketBuffer.Length > 2)
 				{
-					var reader = new DataStreamReader(udpPacketBuffer, 0, udpPacketBuffer.Length);
-					var ctx = default(DataStreamReader.Context);
+					var reader = new NativeStreamReader(udpPacketBuffer, 0, udpPacketBuffer.Length);
 					while (true)
 					{
-						temp.Clear();
-
-						int pos = reader.GetBytesRead(ref ctx);
-						if (pos >= reader.Length) break;
-
-						ushort packetDataLen = reader.ReadUShort(ref ctx);
-						if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
-
-						var packet = reader.ReadChunk(ref ctx, packetDataLen);
-						byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
-
-						//chunkはBroadcast + Unrealiableのみ
-						temp.Write((byte)QosType.Unreliable);
-						temp.Write(NetworkLinkerConstants.BroadcastId);
-						temp.Write(serverPlayerId);
-						//temp.Write(packetDataLen);
-						temp.WriteBytes(packetPtr, packetDataLen);
+						if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, serverPlayerId, (byte)QosType.Unreliable)) break;
+						//Debug.Log($"udpPacketBuffer conLen{ connections.Length} ; tempWriter{tempWriter.Length} :  Len{reader.GetBytesRead()}");
 
 						for (ushort i = 0; i < connections.Length; i++)
 						{
-							if (i == serverPlayerId) continue;
-
-							if (connections[i] != -1)
-							{
-								var connection = networkConnections[connections[i]];
-								connection.Send(driver, qosPipelines[(byte)QosType.Unreliable], temp);
-							}
+							if (IsConnected(i)) SendPacket(i, (byte)QosType.Unreliable, ref tempWriter);
 						}
 					}
 				}
-				if (rudpPacketBuffer.Length != 0)
+				if (rudpPacketBuffer.Length > 2)
 				{
-					var reader = new DataStreamReader(rudpPacketBuffer, 0, rudpPacketBuffer.Length);
-					var ctx = default(DataStreamReader.Context);
+					var reader = new NativeStreamReader(rudpPacketBuffer, 0, rudpPacketBuffer.Length);
 					while (true)
 					{
-						temp.Clear();
-
-						int pos = reader.GetBytesRead(ref ctx);
-						if (pos >= reader.Length) break;
-
-						ushort packetDataLen = reader.ReadUShort(ref ctx);
-						if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) break;
-
-						var packet = reader.ReadChunk(ref ctx, packetDataLen);
-						byte* packetPtr = packet.GetUnsafeReadOnlyPtr();
-
-						//chunkはBroadcast + Unrealiableのみ
-						temp.Write((byte)QosType.Reliable);
-						temp.Write(NetworkLinkerConstants.BroadcastId);
-						temp.Write(serverPlayerId);
-						//temp.Write(packetDataLen);
-						temp.WriteBytes(packetPtr, packetDataLen);
+						if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, serverPlayerId, (byte)QosType.Reliable)) break;
+						//Debug.Log($"rudpPacketBuffer conLen{ connections.Length} ; tempWriter{tempWriter.Length} :  Len{reader.GetBytesRead()}");
 
 						for (ushort i = 0; i < connections.Length; i++)
 						{
-							if (i == serverPlayerId) continue;
-
-							if (connections[i] != -1)
-							{
-								var connection = networkConnections[connections[i]];
-								connection.Send(driver, qosPipelines[(byte)QosType.Reliable], temp);
-								//connections[i].Send(driver, temp);
-							}
+							if (IsConnected(i)) SendPacket(i, (byte)QosType.Reliable, ref tempWriter);
 						}
-						//Debug.Log("chunkedPacketBuffer : " + packetDataLen);
 					}
 				}
-				temp.Dispose();
+				tempArray.Dispose();
 				multiCastList.Dispose();
 			}
 		}
 
 		struct RecievePacketJob : IJob
 		{
-			public Driver driver;
+			public NetworkDriver driver;
 			[ReadOnly]
 			public NativeList<int> connections;
 			[ReadOnly]
@@ -533,9 +460,12 @@ namespace ICKX.Radome
 
 			public NativeList<NetworkConnection> connectConnIdList;
 			public NativeList<NetworkConnection> disconnectConnIdList;
-			public DataStreamWriter relayWriter;
-			//public NativeMultiHashMap<int, DataStreamReader> dataStream;
-			public NativeList<DataPacket> dataStream;
+
+			public NativeStreamWriter recieveBuffer;
+
+			public NativeArray<byte> relayBuffer;
+			//public NativeMultiHashMap<int, NativeStreamReader> dataStream;
+			public NativeList<DataPacket> recieveDataStream;
 			[ReadOnly]
 			public ushort serverPlayerId;
 
@@ -546,10 +476,10 @@ namespace ICKX.Radome
 				disconnectConnIdList.Clear();
 
 				NetworkConnection con;
-				DataStreamReader stream;
+				//NativeStreamReader stream;
 				NetworkEvent.Type cmd;
 
-				while ((cmd = driver.PopEvent(out con, out stream)) != NetworkEvent.Type.Empty)
+				while ((cmd = driver.PopEvent(out con, out var dataStream)) != NetworkEvent.Type.Empty)
 				{
 					if (cmd == NetworkEvent.Type.Connect)
 					{
@@ -563,113 +493,27 @@ namespace ICKX.Radome
 					}
 					else if (cmd == NetworkEvent.Type.Data)
 					{
-						if (!stream.IsCreated)
-						{
-							continue;
-						}
-						//Debug.Log($"driver.PopEvent={cmd} con={con.InternalId} : {stream.Length}");
+						if (!dataStream.IsCreated) continue;
+						//Debug.Log($"driver.PopEvent={cmd} con={con.InternalId} : {dataStream.Length}");
 
-						//var c = new DataStreamReader.Context();
-						//Debug.Log($"Dump : {string.Join(",", stream.ReadBytesAsArray(ref c, stream.Length))}");
+						byte* buffer = (byte*)relayBuffer.GetUnsafePtr();
+						dataStream.ReadBytes(buffer, dataStream.Length);
+						//recieveBuffer.WriteBytes(buffer, dataStream.Length);
+						var stream = new NativeStreamReader(relayBuffer, 0, dataStream.Length);
 
-						var ctx = new DataStreamReader.Context();
-						byte qos = stream.ReadByte(ref ctx);
-						ushort targetPlayerId = stream.ReadUShort(ref ctx);
-
-						if (targetPlayerId == NetworkLinkerConstants.MulticastId)
-						{
-							multiCastList.Clear();
-							ushort multiCastCount = stream.ReadUShort(ref ctx);
-							for (int i = 0; i < multiCastCount; i++)
-							{
-								multiCastList.Add(stream.ReadUShort(ref ctx));
-							}
-						}
-
-						ushort senderPlayerId = stream.ReadUShort(ref ctx);
-						var ctx2 = ctx;
-						byte type = stream.ReadByte(ref ctx2);
-						//if (type == (byte)BuiltInPacket.Type.MeasureRtt) continue;
-
-						if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
-						{
-							for (ushort i = 0; i < connections.Length; i++)
-							{
-								if (i == serverPlayerId) continue;
-								if (connections[i] != -1 && senderPlayerId != i)
-								{
-									RelayPacket(i, stream, qos);
-								}
-							}
-							PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
-						}
-						else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
-						{
-							for (int i = 0; i < multiCastList.Length; i++)
-							{
-								if (multiCastList[i] == serverPlayerId)
-								{
-									//Debug.Log("recieve multiCast Server : " + multiCastList[i] + " / " + senderPlayerId);
-									PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
-								}
-								else
-								{
-									//Debug.Log("recieve multiCastList : " + multiCastList[i] + " / " + connections[multiCastList[i]]);
-									if (senderPlayerId != multiCastList[i])
-									{
-										RelayPacket(multiCastList[i], stream, qos);
-									}
-								}
-							}
-						}
-						else
-						{
-							if (targetPlayerId == serverPlayerId)
-							{
-								PurgeChunk(senderPlayerId, con, ref stream, ref ctx);
-							}
-							else
-							{
-								RelayPacket(targetPlayerId, stream, qos);
-							}
-						}
+						RecieveClientStream(SendMethod, con, stream, multiCastList, serverPlayerId, connections, ref recieveBuffer, ref recieveDataStream);
 					}
 				}
 				multiCastList.Dispose();
 			}
-
-			private void PurgeChunk(ushort senderPlayerId, NetworkConnection con, ref DataStreamReader stream, ref DataStreamReader.Context ctx)
+			
+			private unsafe void SendMethod(byte qos, ushort targetPlayerId, NativeStreamReader packet)
 			{
-				while (true)
-				{
-					int pos = stream.GetBytesRead(ref ctx);
-					if (pos >= stream.Length) break;
-					ushort dataLen = stream.ReadUShort(ref ctx);
-					if (dataLen == 0 || pos + dataLen >= stream.Length) break;
-
-					var chunk = stream.ReadChunk(ref ctx, dataLen);
-					var ctx2 = new DataStreamReader.Context();
-					byte type = chunk.ReadByte(ref ctx2);
-
-					//if (type != (byte)BuiltInPacket.Type.MeasureRtt)
-					//{
-					//	var c = new DataStreamReader.Context();
-					//	Debug.Log($"Dump : {string.Join(",", chunk.ReadBytesAsArray(ref c, chunk.Length))}");
-					//}
-
-					dataStream.Add(new DataPacket() { Connection = con, Chunk = chunk });
-				}
-			}
-
-			private unsafe void RelayPacket(ushort targetPlayerId, DataStreamReader stream, byte qos)
-			{
-				if (connections[targetPlayerId] == -1) return;
-
-				relayWriter.Clear();
-				relayWriter.WriteBytes(stream.GetUnsafeReadOnlyPtr(), stream.Length);
 				var connection = networkConnections[connections[targetPlayerId]];
-				connection.Send(driver, qosPipelines[qos], relayWriter);
-				//connections[targetPlayerId].Send(driver, relayWriter);
+
+				var sendWriter = driver.BeginSend(qosPipelines[qos], connection);
+				sendWriter.WriteBytes(packet.GetUnsafePtr(), packet.Length);
+				driver.EndSend(sendWriter);
 			}
 		}
 	}
@@ -678,6 +522,13 @@ namespace ICKX.Radome
 	public abstract class ServerNetworkManagerBase<ConnIdType, PlayerInfo> : GenericNetworkManagerBase<ConnIdType, PlayerInfo>
 			where ConnIdType : struct, System.IEquatable<ConnIdType> where PlayerInfo : DefaultPlayerInfo, new()
 	{
+		public struct DataPacket
+		{
+			public ushort SenderPlayerId;
+			public NetworkConnection Connection;
+			public NativeStreamReader Chunk;
+		}
+
 		public override bool IsFullMesh => false;
 
 		//public ConnIdType HostConnId { get; protected set; }
@@ -725,7 +576,7 @@ namespace ICKX.Radome
 				return;
 			}
 			JobHandle.Complete();
-			
+
 			//すべてのPlayerに停止を伝えてからサーバーも停止
 			if (GetPlayerCount() == 1)
 			{
@@ -773,7 +624,7 @@ namespace ICKX.Radome
 						if (GetPlayerCount() >= 2)
 						{
 							bool isAllDisconnect = _ActiveConnectionInfoTable.Values
-								.Where(info => info != null && !IsEquals( info.ConnId, EmptyConnId))
+								.Where(info => info != null && !IsEquals(info.ConnId, EmptyConnId))
 								.All(info => info.State == NetworkConnection.State.AwaitingResponse);
 
 							if (isAllDisconnect)
@@ -800,28 +651,25 @@ namespace ICKX.Radome
 		{
 			var addPlayerPacket = MyPlayerInfo.CreateUpdatePlayerInfoPacket((byte)BuiltInPacket.Type.RegisterPlayer);
 			Send(targetPlayerId, addPlayerPacket, QosType.Reliable);
-			addPlayerPacket.Dispose();
 		}
 
 		protected void SendReconnectPlayerPacket(ushort targetPlayerId)
 		{
 			var recconectPlayerPacket = MyPlayerInfo.CreateUpdatePlayerInfoPacket((byte)BuiltInPacket.Type.ReconnectPlayer);
 			Send(targetPlayerId, recconectPlayerPacket, QosType.Reliable);
-			recconectPlayerPacket.Dispose();
 		}
 
 		protected void SendUpdatePlayerPacket(ushort targetPlayerId)
 		{
 			var addPlayerPacket = MyPlayerInfo.CreateUpdatePlayerInfoPacket((byte)BuiltInPacket.Type.UpdatePlayerInfo);
 			Send(targetPlayerId, addPlayerPacket, QosType.Reliable);
-			addPlayerPacket.Dispose();
 		}
 
 		protected void SendUpdateAllPlayerPacket(ushort targetPlayerId)
 		{
-			var packet = new DataStreamWriter(NetworkLinkerConstants.MaxPacketSize, Allocator.Temp);
+			var packet = new NativeStreamWriter(NetworkLinkerConstants.MaxPacketSize, Allocator.Temp);
 
-			packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+			packet.WriteByte((byte)BuiltInPacket.Type.UpdatePlayerInfo);
 			foreach (var pair in _ConnIdUniqueIdable)
 			{
 				ConnIdType connId = pair.Key;
@@ -833,13 +681,13 @@ namespace ICKX.Radome
 				var playerInfo = GetPlayerInfoByUniqueId(uniqueId);
 				if (connInfo != null && playerInfo != null && connInfo.State != NetworkConnection.State.Connecting)
 				{
-					packet.Write((byte)connInfo.State);
+					packet.WriteByte((byte)connInfo.State);
 					playerInfo.AppendPlayerInfoPacket(ref packet);
 				}
 				else
 				{
 					playerInfo = new PlayerInfo() { PlayerId = playerId };
-					packet.Write((byte)NetworkConnection.State.Disconnected);
+					packet.WriteByte((byte)NetworkConnection.State.Disconnected);
 					playerInfo.AppendPlayerInfoPacket(ref packet);
 				}
 
@@ -847,14 +695,13 @@ namespace ICKX.Radome
 				{
 					Send(targetPlayerId, packet, QosType.Reliable);
 					packet.Clear();
-					packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+					packet.WriteByte((byte)BuiltInPacket.Type.UpdatePlayerInfo);
 				}
 			}
 			if (packet.Length > 1)
 			{
 				Send(targetPlayerId, packet, QosType.Reliable);
 			}
-			packet.Dispose();
 		}
 
 		protected void BroadcastUpdatePlayerPacket(ushort playerId)
@@ -863,63 +710,61 @@ namespace ICKX.Radome
 			var playerInfo = GetPlayerInfoByPlayerId(playerId);
 			if (connInfo != null && playerInfo != null && connInfo.State != NetworkConnection.State.Connecting)
 			{
-				var packet = new DataStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
-				packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
-				packet.Write((byte)connInfo.State);
+				var packet = new NativeStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
+				packet.WriteByte((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+				packet.WriteByte((byte)connInfo.State);
 				playerInfo.AppendPlayerInfoPacket(ref packet);
 				Broadcast(packet, QosType.Reliable, true);
-				packet.Dispose();
 			}
 			else
 			{
 				playerInfo = new PlayerInfo { PlayerId = playerId };
-				var packet = new DataStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
-				packet.Write((byte)BuiltInPacket.Type.UpdatePlayerInfo);
-				packet.Write((byte)NetworkConnection.State.Disconnected);
+				var packet = new NativeStreamWriter(2 + playerInfo.PacketSize, Allocator.Temp);
+				packet.WriteByte((byte)BuiltInPacket.Type.UpdatePlayerInfo);
+				packet.WriteByte((byte)NetworkConnection.State.Disconnected);
 				playerInfo.AppendPlayerInfoPacket(ref packet);
 				Broadcast(packet, QosType.Reliable, true);
-				packet.Dispose();
 			}
 		}
 
 		protected void SendRegisterPlayerPacket(ushort id, bool isReconnect)
 		{
-			var registerPacket = new DataStreamWriter(14 + _ActivePlayerIdList.Count + MyPlayerInfo.PacketSize, Allocator.Temp);
-			registerPacket.Write((byte)BuiltInPacket.Type.RegisterPlayer);
-			registerPacket.Write(id);
-			registerPacket.Write(LeaderStatTime);
-			registerPacket.Write((byte)(isReconnect ? 1 : 0));
+			var registerPacket = new NativeStreamWriter(14 + _ActivePlayerIdList.Count + MyPlayerInfo.PacketSize, Allocator.Temp);
+			registerPacket.WriteByte((byte)BuiltInPacket.Type.RegisterPlayer);
+			registerPacket.WriteUShort(id);
+			registerPacket.WriteLong(LeaderStatTime);
+			registerPacket.WriteByte((byte)(isReconnect ? 1 : 0));
 
-			registerPacket.Write((byte)_ActivePlayerIdList.Count);
+			registerPacket.WriteByte((byte)_ActivePlayerIdList.Count);
 			for (int i = 0; i < _ActivePlayerIdList.Count; i++)
 			{
-				registerPacket.Write(_ActivePlayerIdList[i]);
+				registerPacket.WriteByte(_ActivePlayerIdList[i]);
 			}
 			MyPlayerInfo.AppendPlayerInfoPacket(ref registerPacket);
 
 			//Debug.Log($"Send Reg {id} : {LeaderStatTime} : {isReconnect} : count={_ActivePlayerIdList.Count} : {registerPacket.Length}");
 
 			Send(id, registerPacket, QosType.Reliable);
-
-			registerPacket.Dispose();
 		}
 
 		protected void SendUnregisterPlayerPacket()
 		{
-			using (var unregisterPlayerPacket = new DataStreamWriter(9, Allocator.Temp))
+			using (var array = new NativeArray<byte>(9, Allocator.Temp))
 			{
-				unregisterPlayerPacket.Write((byte)BuiltInPacket.Type.UnregisterPlayer);
-				unregisterPlayerPacket.Write(MyPlayerInfo.UniqueId);
+				var unregisterPlayerPacket = new NativeStreamWriter(array);
+				unregisterPlayerPacket.WriteByte((byte)BuiltInPacket.Type.UnregisterPlayer);
+				unregisterPlayerPacket.WriteULong(MyPlayerInfo.UniqueId);
 				Send(ServerPlayerId, unregisterPlayerPacket, QosType.Reliable);
 			}
 		}
 
 		protected void BroadcastStopNetworkPacket()
 		{
-			using (var stopNetworkPacket = new DataStreamWriter(2, Allocator.Temp))
+			using (var array = new NativeArray<byte>(2, Allocator.Temp))
 			{
-				stopNetworkPacket.Write((byte)BuiltInPacket.Type.StopNetwork);
-				stopNetworkPacket.Write((byte)0);    //TODO error code
+				var stopNetworkPacket = new NativeStreamWriter(array);
+				stopNetworkPacket.WriteByte((byte)BuiltInPacket.Type.StopNetwork);
+				stopNetworkPacket.WriteByte((byte)0);    //TODO error code
 
 				Broadcast(stopNetworkPacket, QosType.Reliable, true);
 			}
@@ -944,9 +789,176 @@ namespace ICKX.Radome
 			}
 		}
 
-		protected abstract void DisconnectMethod(ConnIdType connId);
 
-		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
+		protected static unsafe bool CreateSingleSendPacket(ref NativeStreamWriter writer, out ushort targetPlayerId, out byte qos, ref NativeStreamReader reader, NativeList<ushort> multiCastList, ushort serverPlayerId)
+		{
+			targetPlayerId = 0;
+			qos = 0;
+
+			writer.Clear();
+
+			int pos = reader.GetBytesRead();
+			if (pos >= reader.Length) return false;
+
+			qos = reader.ReadByte();
+			targetPlayerId = reader.ReadUShort();
+
+			//Debug.Log($"CreateSingleSendPacket {(QosType)qos} {targetPlayerId} writer {writer.Length}");
+			if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+			{
+				multiCastList.Clear();
+				ushort multiCastCount = reader.ReadUShort();
+				for (int i = 0; i < multiCastCount; i++)
+				{
+					multiCastList.Add(reader.ReadUShort());
+				}
+				//Debug.Log($"{(QosType)qos} {string.Join(",", multiCastList.ToArray())}");
+			}
+
+			ushort packetDataLen = reader.ReadUShort();
+			if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) return false;
+
+			var packet = reader.ReadChunk(packetDataLen);
+			byte* packetPtr = packet.GetUnsafePtr();
+
+			writer.WriteByte(qos);
+			writer.WriteUShort(targetPlayerId);
+
+			if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+			{
+				writer.WriteUShort((ushort)multiCastList.Length);
+				for (ushort i = 0; i < multiCastList.Length; i++)
+				{
+					writer.WriteUShort((ushort)multiCastList[i]);
+				}
+			}
+
+			writer.WriteUShort(serverPlayerId);
+			writer.WriteUShort(packetDataLen);
+			writer.WriteBytes(packetPtr, packetDataLen);
+			return true;
+		}
+		
+		protected static unsafe bool CreateChunkSendPacket(ref NativeStreamWriter writer, ref NativeStreamReader reader, NativeList<ushort> multiCastList, ushort serverPlayerId, byte qos)
+		{
+			writer.Clear();
+
+			int pos = reader.GetBytesRead();
+			if (pos >= reader.Length) return false;
+
+			ushort packetDataLen = reader.ReadUShort();
+			if (packetDataLen == 0 || pos + packetDataLen >= reader.Length) return false;
+
+			var packet = reader.ReadChunk(packetDataLen);
+			byte* packetPtr = packet.GetUnsafePtr();
+
+			//chunkはBroadcast + Unrealiableのみ
+			writer.WriteByte(qos);
+			writer.WriteUShort(NetworkLinkerConstants.BroadcastId);
+			writer.WriteUShort(serverPlayerId);
+			//temp.Write(packetDataLen);
+			writer.WriteBytes(packetPtr, packetDataLen);
+			return true;
+		}
+
+		protected static unsafe bool RecieveClientStream(System.Action<byte, ushort, NativeStreamReader> sendMethod, NetworkConnection con, NativeStreamReader stream
+		, NativeList<ushort> multiCastList, ushort serverPlayerId, NativeList<int> connections, ref NativeStreamWriter recieveBuffer, ref NativeList<DataPacket> dataStream)
+		{
+			var replayPackat = stream;
+			byte qos = stream.ReadByte();
+			ushort targetPlayerId = stream.ReadUShort();
+
+			if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+			{
+				multiCastList.Clear();
+				ushort multiCastCount = stream.ReadUShort();
+				for (int i = 0; i < multiCastCount; i++)
+				{
+					multiCastList.Add(stream.ReadUShort());
+				}
+			}
+
+			ushort senderPlayerId = stream.ReadUShort();
+
+			//Debug.Log($"qos={qos} : targetPlayerId{targetPlayerId} senderPlayerId{senderPlayerId}");
+
+			if (targetPlayerId == NetworkLinkerConstants.BroadcastId)
+			{
+				for (ushort i = 0; i < connections.Length; i++)
+				{
+					if (i == serverPlayerId) continue;
+					if (connections[i] != -1 && senderPlayerId != i)
+					{
+						replayPackat.SetPosition(0);
+						sendMethod(qos, targetPlayerId, replayPackat);
+					}
+				}
+				PurgeChunk(senderPlayerId, con, ref stream, ref recieveBuffer, ref dataStream);
+			}
+			else if (targetPlayerId == NetworkLinkerConstants.MulticastId)
+			{
+				for (int i = 0; i < multiCastList.Length; i++)
+				{
+					if (multiCastList[i] == serverPlayerId)
+					{
+						//Debug.Log("recieve multiCast Server : " + multiCastList[i] + " / " + senderPlayerId);
+						PurgeChunk(senderPlayerId, con, ref stream, ref recieveBuffer, ref dataStream);
+					}
+					else
+					{
+						//Debug.Log("recieve multiCastList : " + multiCastList[i] + " / " + connections[multiCastList[i]]);
+						if (senderPlayerId != multiCastList[i])
+						{
+							replayPackat.SetPosition(0);
+							sendMethod(qos, targetPlayerId, replayPackat);
+						}
+					}
+				}
+			}
+			else
+			{
+				if (targetPlayerId == serverPlayerId)
+				{
+					PurgeChunk(senderPlayerId, con, ref stream, ref recieveBuffer, ref dataStream);
+				}
+				else
+				{
+					replayPackat.SetPosition(0);
+					sendMethod(qos, targetPlayerId, replayPackat);
+				}
+			}
+			return true;
+		}
+
+		private static unsafe void PurgeChunk(ushort senderPlayerId, NetworkConnection con
+			, ref NativeStreamReader stream, ref NativeStreamWriter recieveBuffer, ref NativeList<DataPacket> dataStream)
+		{
+			while (true)
+			{
+				int pos = stream.GetBytesRead();
+				if (pos >= stream.Length) break;
+				ushort dataLen = stream.ReadUShort();
+				
+				if (dataLen == 0 || pos + dataLen >= stream.Length) break;
+				
+				//recieveBufferに1フレーム分のパケットをバッファリングしていく
+				int startIndex = recieveBuffer.Length;
+				if (recieveBuffer.Length + dataLen > recieveBuffer.Capacity)
+				{
+					Debug.LogError("RecieveBuffer Capacity over !! Capacity = " + recieveBuffer.Capacity);
+					break;
+				}
+				var tempChunk = stream.ReadChunk(dataLen);
+				recieveBuffer.WriteBytes(tempChunk.GetUnsafePtr(), dataLen);
+				var chunk = new NativeStreamReader(recieveBuffer, startIndex, dataLen);
+
+				dataStream.Add(new DataPacket() { SenderPlayerId = senderPlayerId, Connection = con, Chunk = chunk });
+			}
+		}
+
+		protected abstract void DisconnectMethod(ConnIdType connId);
+		
+		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, NativeStreamReader chunk)
 		{
 			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");
 			switch (type)
@@ -956,7 +968,7 @@ namespace ICKX.Radome
 				case (byte)BuiltInPacket.Type.RegisterPlayer:
 					{
 						var addPlayerInfo = new PlayerInfo();
-						addPlayerInfo.Deserialize(ref chunk, ref ctx2);
+						addPlayerInfo.Deserialize(ref chunk);
 
 						var connInfo = GetConnectionInfoByUniqueId(addPlayerInfo.UniqueId);
 						if (connInfo == null || connInfo.State != NetworkConnection.State.Connected)
@@ -992,7 +1004,7 @@ namespace ICKX.Radome
 				case (byte)BuiltInPacket.Type.ReconnectPlayer:
 					{
 						var reconnectPlayerInfo = new PlayerInfo();
-						reconnectPlayerInfo.Deserialize(ref chunk, ref ctx2);
+						reconnectPlayerInfo.Deserialize(ref chunk);
 						if (GetPlayerIdByUniqueId(reconnectPlayerInfo.UniqueId, out ushort playerId) && playerId == reconnectPlayerInfo.PlayerId)
 						{
 							var connInfo = GetConnectionInfoByUniqueId(reconnectPlayerInfo.UniqueId);
@@ -1008,7 +1020,7 @@ namespace ICKX.Radome
 				case (byte)BuiltInPacket.Type.UnregisterPlayer:
 					//登録解除リクエスト
 					{
-						ulong unregisterUniqueId = chunk.ReadULong(ref ctx2);
+						ulong unregisterUniqueId = chunk.ReadULong();
 						if (GetPlayerIdByUniqueId(unregisterUniqueId, out ushort playerId))
 						{
 							var connInfo = GetConnectionInfoByUniqueId(unregisterUniqueId);
@@ -1030,11 +1042,10 @@ namespace ICKX.Radome
 				case (byte)BuiltInPacket.Type.UpdatePlayerInfo:
 					{
 						//Serverは追えているのでPlayerInfoの更新のみ
-						var state = (NetworkConnection.State)chunk.ReadByte(ref ctx2);
-						var ctx3 = ctx2;
-						var playerId = chunk.ReadUShort(ref ctx3);
+						var state = (NetworkConnection.State)chunk.ReadByte();
+						var playerId = chunk.ReadUShort();
 
-						GetPlayerInfoByPlayerId(playerId).Deserialize(ref chunk, ref ctx2);
+						GetPlayerInfoByPlayerId(playerId).Deserialize(ref chunk);
 						BroadcastUpdatePlayerPacket(playerId);
 					}
 					break;
@@ -1042,9 +1053,9 @@ namespace ICKX.Radome
 					{
 						//自分宛パケットの解析
 						var playerInfo = GetPlayerInfoByConnId(connId);
-						if(playerInfo != null)
+						if (playerInfo != null)
 						{
-							RecieveData(playerInfo.PlayerId, playerInfo.UniqueId, type, chunk, ctx2);
+							RecieveData(playerInfo.PlayerId, playerInfo.UniqueId, type, chunk);
 						}
 					}
 					break;

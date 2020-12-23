@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using ICKX.Radome;
 using Unity.Networking.Transport;
+using Unity.Collections;
 
 public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum, System.IComparable
 {
@@ -51,12 +52,13 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 	{
 		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
 
-		using (var packet = new DataStreamWriter (16, Unity.Collections.Allocator.Temp))
+		using (var array = new NativeArray<byte>( 16, Unity.Collections.Allocator.Temp))
 		{
-			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
-			packet.Write(TypeNameHash);
-			packet.Write((byte)SyncMode.Default);
-			packet.Write(_PhaseTable[phase]);
+			var packet = new NativeStreamWriter(array);
+			packet.WriteByte((byte)BuiltInPacket.Type.SyncPhase);
+			packet.WriteInt(TypeNameHash);
+			packet.WriteByte((byte)SyncMode.Default);
+			packet.WriteByte(_PhaseTable[phase]);
 			GamePacketManager.Brodcast(packet, QosType.Reliable);
 		}
 
@@ -73,12 +75,13 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 
 		_SyncPhaseDefTable[GamePacketManager.UniqueId] = phase;
 
-		using (var packet = new DataStreamWriter(16, Unity.Collections.Allocator.Temp))
+		using (var array = new NativeArray<byte>(16, Unity.Collections.Allocator.Temp))
 		{
-			packet.Write((byte)BuiltInPacket.Type.SyncPhase);
-			packet.Write(TypeNameHash);
-			packet.Write((byte)SyncMode.Force);
-			packet.Write(_PhaseTable[phase]);
+			var packet = new NativeStreamWriter(array);
+			packet.WriteByte((byte)BuiltInPacket.Type.SyncPhase);
+			packet.WriteInt(TypeNameHash);
+			packet.WriteByte((byte)SyncMode.Force);
+			packet.WriteByte(_PhaseTable[phase]);
 			GamePacketManager.Brodcast(packet, QosType.Reliable);
 		}
 
@@ -87,13 +90,13 @@ public class SyncPhaseNotificator<PhaseDef> where PhaseDef : struct, System.Enum
 		OnChangePhase?.Invoke(prev, phase);
 	}
 
-	private void OnRecievePacket(ushort senderPlayerId, ulong uniqueId, byte type, Unity.Networking.Transport.DataStreamReader stream, Unity.Networking.Transport.DataStreamReader.Context ctx)
+	private void OnRecievePacket(ushort senderPlayerId, ulong uniqueId, byte type, NativeStreamReader stream)
 	{
 		if (type != (byte)BuiltInPacket.Type.SyncPhase) return;
-		if (stream.ReadInt(ref ctx) != TypeNameHash) return;
+		if (stream.ReadInt() != TypeNameHash) return;
 
-		SyncMode mode = (SyncMode)stream.ReadByte(ref ctx);
-		var phase = _PhaseDefs[stream.ReadByte(ref ctx)];
+		SyncMode mode = (SyncMode)stream.ReadByte();
+		var phase = _PhaseDefs[stream.ReadByte()];
 
 		if (mode == SyncMode.Default)
 		{

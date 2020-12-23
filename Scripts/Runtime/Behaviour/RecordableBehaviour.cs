@@ -29,17 +29,17 @@ namespace ICKX.Radome {
 		/// <summary>
 		/// Rpcパケットを受信する
 		/// </summary>
-		void OnRecieveRpcPacket(ushort senderPlayerId, byte methodId, DataStreamReader rpcPacket, DataStreamReader.Context ctx);
+		void OnRecieveRpcPacket(ushort senderPlayerId, byte methodId, NativeStreamReader rpcPacket);
 
 		/// <summary>
 		/// 変数を同期するパケットに書き込む
 		/// </summary>
-		void WriteSyncVarPacket(ref DataStreamWriter syncPacket);
+		void WriteSyncVarPacket( NativeStreamWriter syncPacket);
 
 		/// <summary>
 		/// 変数を同期するパケットを読み込み反映する
 		/// </summary>
-		void ReadSyncVarPacket(ref DataStreamReader syncPacket, ref DataStreamReader.Context ctx);
+		void ReadSyncVarPacket( NativeStreamReader syncPacket);
 	}
 
 	[RequireComponent (typeof (RecordableIdentity))]
@@ -99,30 +99,30 @@ namespace ICKX.Radome {
         /// <summary>
         /// 指定したPlayerIDのリモートインスタンスにパケットを送信
         /// </summary>
-        protected void SendRpc (ushort targetPlayerId, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important = true) {
+        protected void SendRpc (ushort targetPlayerId, byte methodId, NativeStreamWriter rpcPacket, QosType qosType, bool important = true) {
             CacheRecordableIdentity.SendRpc (targetPlayerId, ComponentIndex, methodId, rpcPacket, qosType, important);
         }
 
         /// <summary>
         /// 全クライアントのリモートインスタンスにパケットを送信
         /// </summary>
-        protected void BrodcastRpc (byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important = true) {
+        protected void BrodcastRpc (byte methodId, NativeStreamWriter rpcPacket, QosType qosType, bool important = true) {
             CacheRecordableIdentity.BrodcastRpc (ComponentIndex, methodId, rpcPacket, qosType, important);
         }
 
         /// <summary>
         /// Rpcパケットを受信する
         /// </summary>
-        public abstract void OnRecieveRpcPacket (ushort senderPlayerId, byte methodId, DataStreamReader rpcPacket, DataStreamReader.Context ctx);
+        public abstract void OnRecieveRpcPacket (ushort senderPlayerId, byte methodId, NativeStreamReader rpcPacket);
 
         /// <summary>
         /// 変数を同期するパケットに書き込む
         /// </summary>
-        public abstract void WriteSyncVarPacket (ref DataStreamWriter syncPacket);
+        public abstract void WriteSyncVarPacket (NativeStreamWriter syncPacket);
 
         /// <summary>
         /// 変数を同期するパケットを読み込み反映する
         /// </summary>
-        public abstract void ReadSyncVarPacket (ref DataStreamReader syncPacket, ref DataStreamReader.Context ctx);
+        public abstract void ReadSyncVarPacket (NativeStreamReader syncPacket);
     }
 }

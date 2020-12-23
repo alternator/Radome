@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using Unity.Networking.Transport;
 using UnityEngine;
-using UpdateLoop = UnityEngine.Experimental.PlayerLoop.Update;
-using UnityEngine.Experimental.LowLevel;
+using UpdateLoop = UnityEngine.PlayerLoop.Update;
+
 using System.Security.Cryptography;
 using Unity.Collections;
 using System.IO;
@@ -72,7 +72,7 @@ namespace ICKX.Radome {
 			_sendTransporterTable = new Dictionary<int, Transporter> ();
 			_recieveTransporterTable = new Dictionary<int, Transporter> ();
 
-			CustomPlayerLoopUtility.InsertLoopLast (typeof (UpdateLoop), new PlayerLoopSystem () {
+			CustomPlayerLoopUtility.InsertLoopLast (typeof (UpdateLoop), new UnityEngine.LowLevel.PlayerLoopSystem () {
 				type = typeof (TransporterManagerUpdate),
 				updateDelegate = Instance.Update
 			});
@@ -85,11 +85,13 @@ namespace ICKX.Radome {
 
 		public bool SendCancel(int hash, ushort playerId) {
 			if (_sendTransporterTable.Remove(hash)) {
-				using (var writer = new DataStreamWriter(7, Allocator.Temp)) {
-					writer.Write((byte)BuiltInPacket.Type.DataTransporter);
-					writer.Write((byte)TransporterType.File);
-					writer.Write(hash);
-					writer.Write((byte)FlagDef.Cancel);
+				using (var array = new NativeArray<byte>(7, Allocator.Temp))
+				{
+					var writer = new NativeStreamWriter(array);
+					writer.WriteByte((byte)BuiltInPacket.Type.DataTransporter);
+					writer.WriteByte((byte)TransporterType.File);
+					writer.WriteInt(hash);
+					writer.WriteByte((byte)FlagDef.Cancel);
 
 					if (playerId == NetworkLinkerConstants.BroadcastId)
 					{
@@ -120,13 +122,13 @@ namespace ICKX.Radome {
 			return System.BitConverter.ToInt32 (crypto256.ComputeHash (fs), 0);
 		}
 
-		private void OnRecievePacketMethod (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
+		private void OnRecievePacketMethod (ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader stream) {
 			if (type == (byte)BuiltInPacket.Type.DataTransporter) {
-				var transType = stream.ReadByte (ref ctx);
+				var transType = stream.ReadByte ();
 				if (transType != Type) return;
 
-				int hash = stream.ReadInt (ref ctx);
-				FlagDef flag = (FlagDef)stream.ReadByte (ref ctx);
+				int hash = stream.ReadInt ();
+				FlagDef flag = (FlagDef)stream.ReadByte ();
 
 				bool isStart = (flag == FlagDef.Start);
 				bool isComplete = (flag == FlagDef.Complete);
@@ -141,7 +143,7 @@ namespace ICKX.Radome {
                     }
                 }
                 else if (isStart) {
-					transporter = RecieveStart (hash, stream, ref ctx);
+					transporter = RecieveStart (hash, stream);
 					transporter.hash = hash;
 					_recieveTransporterTable[hash] = transporter;
 					OnRecieveStart?.Invoke (transporter);
@@ -149,7 +151,7 @@ namespace ICKX.Radome {
                 {
                     if (_recieveTransporterTable.TryGetValue(hash, out transporter))
                     {
-                        RecieveFragmentData(hash, stream, ref ctx, transporter);
+                        RecieveFragmentData(hash, stream, transporter);
                         if (isComplete)
                         {
                             _recieveTransporterTable.Remove(hash);
@@ -168,8 +170,8 @@ namespace ICKX.Radome {
 		}
 
 		protected abstract void SendFragmentData ();
-		protected abstract Transporter RecieveStart (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx);
-		protected abstract void RecieveFragmentData (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx, Transporter transporter);
+		protected abstract Transporter RecieveStart (int hash, NativeStreamReader stream);
+		protected abstract void RecieveFragmentData (int hash, NativeStreamReader stream, Transporter transporter);
 		protected abstract void RecieveComplete (int hash, Transporter transporter);
 	}
 }

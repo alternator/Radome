@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
-using Unity.Networking.Transport.LowLevel.Unsafe;
 using UnityEngine;
 
 namespace ICKX.Radome
@@ -39,24 +38,24 @@ namespace ICKX.Radome
 
         public virtual int PacketSize => 12;
 
-        public DataStreamWriter CreateUpdatePlayerInfoPacket(byte packetType)
+        public NativeStreamWriter CreateUpdatePlayerInfoPacket(byte packetType)
         {
-            var updatePlayerPacket = new DataStreamWriter(PacketSize + 1, Allocator.Temp);
-            updatePlayerPacket.Write(packetType);
+            var updatePlayerPacket = new NativeStreamWriter(PacketSize + 1, Allocator.Temp);
+            updatePlayerPacket.WriteByte(packetType);
             AppendPlayerInfoPacket(ref updatePlayerPacket);
             return updatePlayerPacket;
         }
 
-        public virtual void AppendPlayerInfoPacket(ref DataStreamWriter writer)
+        public virtual void AppendPlayerInfoPacket(ref NativeStreamWriter writer)
         {
-            writer.Write(PlayerId);
-            writer.Write(UniqueId);
+            writer.WriteUShort(PlayerId);
+            writer.WriteULong(UniqueId);
         }
 
-        public virtual void Deserialize(ref DataStreamReader chunk, ref DataStreamReader.Context ctx2)
+        public virtual void Deserialize(ref NativeStreamReader chunk)
         {
-            PlayerId = chunk.ReadUShort(ref ctx2);
-            UniqueId = chunk.ReadULong(ref ctx2);
+            PlayerId = chunk.ReadUShort();
+            UniqueId = chunk.ReadULong();
         }
 
 		public virtual void CopyTo (DefaultPlayerInfo playerInfo)
@@ -93,12 +92,13 @@ namespace ICKX.Radome
         public delegate void OnDisconnectPlayerEvent(ushort playerId, ulong uniqueId);
         public delegate void OnRegisterPlayerEvent(ushort playerId, ulong uniqueId);
         public delegate void OnUnregisterPlayerEvent(ushort playerId, ulong uniqueId);
-        public delegate void OnRecievePacketEvent(ushort senderPlayerId, ulong uniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx);
+        public delegate void OnRecievePacketEvent(ushort senderPlayerId, ulong uniqueId, byte type, NativeStreamReader stream);
 
         public ushort ServerPlayerId { get; protected set; } = 0;
 
-        protected DataStreamWriter _SinglePacketBuffer;
-        protected ChuckPacketManager _BroadcastRudpChunkedPacketManager;
+		protected NativeArray<byte> _SinglePacketBuffer;
+		protected NativeStreamWriter _SinglePacketBufferWriter;
+		protected ChuckPacketManager _BroadcastRudpChunkedPacketManager;
         protected ChuckPacketManager _BroadcastUdpChunkedPacketManager;
 		
         protected List<byte> _ActivePlayerIdList = new List<byte>(16);
@@ -134,8 +134,9 @@ namespace ICKX.Radome
 
         public NetworkManagerBase()
         {
-			_SinglePacketBuffer = new DataStreamWriter(ushort.MaxValue, Allocator.Persistent);
-            _BroadcastRudpChunkedPacketManager = new ChuckPacketManager(800);
+			_SinglePacketBuffer = new NativeArray<byte>(ushort.MaxValue, Allocator.Persistent);
+			_SinglePacketBufferWriter = new NativeStreamWriter(_SinglePacketBuffer);
+			_BroadcastRudpChunkedPacketManager = new ChuckPacketManager(800);
             _BroadcastUdpChunkedPacketManager = new ChuckPacketManager(1000);
         }
 
@@ -182,7 +183,7 @@ namespace ICKX.Radome
 			IsStopRequest = false;
 
 			JobHandle.Complete();
-            _SinglePacketBuffer.Clear();
+            _SinglePacketBufferWriter.Clear();
             _BroadcastRudpChunkedPacketManager.Clear();
             _BroadcastUdpChunkedPacketManager.Clear();
 
@@ -364,14 +365,14 @@ namespace ICKX.Radome
             OnUnregisterPlayer?.Invoke(id, uniqueId);
         }
 
-        protected void ExecOnRecievePacket(ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx)
+        protected void ExecOnRecievePacket(ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader stream)
         {
-            OnRecievePacket?.Invoke(senderPlayerId, senderUniqueId, type, stream, ctx);
+            OnRecievePacket?.Invoke(senderPlayerId, senderUniqueId, type, stream);
         }
         
-        protected virtual void RecieveData(ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader chunk, DataStreamReader.Context ctx)
+        protected virtual void RecieveData(ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader chunk)
         {
-            ExecOnRecievePacket(senderPlayerId, senderUniqueId, type, chunk, ctx);
+            ExecOnRecievePacket(senderPlayerId, senderUniqueId, type, chunk);
         }
 
         public abstract bool IsFullMesh { get; }
@@ -379,23 +380,26 @@ namespace ICKX.Radome
         public abstract void OnFirstUpdate();
         public abstract void OnLastUpdate();
 
-        protected virtual unsafe void SendSingle(ushort targetPlayerId, DataStreamWriter data, QosType qos)
+        protected virtual unsafe void SendSingle(ushort targetPlayerId, NativeStreamWriter data, QosType qos)
         {
-            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+			byte* dataPtr = data.GetUnsafePtr();
 
-			//Debug.Log("sendsingle " + targetPlayerId + " : Len=" + data.Length);
+			if (_SinglePacketBufferWriter.Length + data.Length + 5 >= _SinglePacketBufferWriter.Capacity)
+			{
+				int newSize = _SinglePacketBuffer.Length * 2;
+				Debug.Log($"newSize = {newSize}");
+				_SinglePacketBuffer.Dispose();
+				_SinglePacketBuffer = new NativeArray<byte>(newSize, Allocator.Persistent);
+				_SinglePacketBufferWriter = new NativeStreamWriter(_SinglePacketBuffer);
+			}
+			_SinglePacketBufferWriter.WriteByte((byte)qos);
+			_SinglePacketBufferWriter.WriteUShort(targetPlayerId);
+			_SinglePacketBufferWriter.WriteUShort((ushort)data.Length);
+			_SinglePacketBufferWriter.WriteBytes(dataPtr, data.Length);
+			//Debug.Log($"SendSingle id = {targetPlayerId} dataLen  = {data.Length} qos = {qos}");
+		}
 
-            if (_SinglePacketBuffer.Length + data.Length + 5 >= _SinglePacketBuffer.Capacity)
-            {
-                _SinglePacketBuffer.Capacity *= 2;
-            }
-            _SinglePacketBuffer.Write((byte)qos);
-            _SinglePacketBuffer.Write(targetPlayerId);
-            _SinglePacketBuffer.Write((ushort)data.Length);
-            _SinglePacketBuffer.WriteBytes(dataPtr, data.Length);
-        }
-
-        public virtual void Send(ulong targetUniqueId, DataStreamWriter data, QosType qos)
+        public virtual void Send(ulong targetUniqueId, NativeStreamWriter data, QosType qos)
         {
             if (GetPlayerIdByUniqueId(targetUniqueId, out ushort playerId))
             {
@@ -406,7 +410,7 @@ namespace ICKX.Radome
         /// <summary>
         /// Player1人にパケットを送信
         /// </summary>
-        public virtual void Send(ushort targetPlayerId, DataStreamWriter data, QosType qos)
+        public virtual void Send(ushort targetPlayerId, NativeStreamWriter data, QosType qos)
         {
             //Debug.Log($"Sennd {targetPlayerId} Len={data.Length} qos={qos}");
             if (NetworkState == NetworkConnection.State.Disconnected)
@@ -421,7 +425,7 @@ namespace ICKX.Radome
         /// <summary>
         /// 複数のPlayerにパケットを送信
         /// </summary>
-        public virtual unsafe void Multicast(NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos)
+        public virtual unsafe void Multicast(NativeList<ushort> playerIdList, NativeStreamWriter data, QosType qos)
         {
             //Debug.Log($"Sennd {playerIdList.Length} Len={data.Length} qos={qos}");
             if (NetworkState == NetworkConnection.State.Disconnected)
@@ -429,64 +433,70 @@ namespace ICKX.Radome
                 Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
                 return;
             }
-            if (_SinglePacketBuffer.Length + data.Length + 7 + 2 * playerIdList.Length >= _SinglePacketBuffer.Capacity)
+            if (_SinglePacketBufferWriter.Length + data.Length + 7 + 2 * playerIdList.Length >= _SinglePacketBufferWriter.Capacity)
             {
-                _SinglePacketBuffer.Capacity *= 2;
+				int newSize = _SinglePacketBuffer.Length * 2;
+				_SinglePacketBuffer.Dispose();
+				_SinglePacketBuffer = new NativeArray<byte>(newSize, Allocator.Persistent);
+				_SinglePacketBufferWriter = new NativeStreamWriter(_SinglePacketBuffer);
             }
 
-            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+            byte* dataPtr = data.GetUnsafePtr();
             ushort dataLength = (ushort)data.Length;
 
-            _SinglePacketBuffer.Write((byte)qos);
-            _SinglePacketBuffer.Write(NetworkLinkerConstants.MulticastId);
+            _SinglePacketBufferWriter.WriteByte((byte)qos);
+            _SinglePacketBufferWriter.WriteUShort(NetworkLinkerConstants.MulticastId);
 
-            _SinglePacketBuffer.Write((ushort)playerIdList.Length);
+            _SinglePacketBufferWriter.WriteUShort((ushort)playerIdList.Length);
             for (int i = 0; i < playerIdList.Length; i++)
             {
-                _SinglePacketBuffer.Write(playerIdList[i]);
+                _SinglePacketBufferWriter.WriteUShort(playerIdList[i]);
             }
-            _SinglePacketBuffer.Write((ushort)data.Length);
-            _SinglePacketBuffer.WriteBytes(dataPtr, data.Length);
+            _SinglePacketBufferWriter.WriteUShort((ushort)data.Length);
+            _SinglePacketBufferWriter.WriteBytes(dataPtr, data.Length);
         }
 
         /// <summary>
         /// 複数のPlayerにパケットを送信
         /// </summary>
-        public virtual unsafe void Multicast(NativeList<ulong> uniqueIdList, DataStreamWriter data, QosType qos)
+        public virtual unsafe void Multicast(NativeList<ulong> uniqueIdList, NativeStreamWriter data, QosType qos)
         {
             //Debug.Log($"Multicast {uniqueIdList.Length} Len={data.Length} qos={qos}");
             if (NetworkState == NetworkConnection.State.Disconnected)
             {
                 Debug.LogError("Send Failed : NetworkConnection.State.Disconnected");
                 return;
-            }
-            if (_SinglePacketBuffer.Length + data.Length + 7 + 2 * uniqueIdList.Length >= _SinglePacketBuffer.Capacity)
-            {
-                _SinglePacketBuffer.Capacity *= 2;
-            }
+			}
+			if (_SinglePacketBufferWriter.Length + data.Length + 7 + 2 * uniqueIdList.Length >= _SinglePacketBufferWriter.Capacity)
+			{
+				int newSize = _SinglePacketBuffer.Length * 2;
+				_SinglePacketBuffer.Dispose();
+				_SinglePacketBuffer = new NativeArray<byte>(newSize, Allocator.Persistent);
+				_SinglePacketBufferWriter = new NativeStreamWriter(_SinglePacketBuffer);
+			}
 
-            byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr(data);
+			byte* dataPtr = data.GetUnsafePtr();
             ushort dataLength = (ushort)data.Length;
 
-            _SinglePacketBuffer.Write((byte)qos);
-            _SinglePacketBuffer.Write(NetworkLinkerConstants.MulticastId);
+            _SinglePacketBufferWriter.WriteByte((byte)qos);
+            _SinglePacketBufferWriter.WriteUShort(NetworkLinkerConstants.MulticastId);
 
-            _SinglePacketBuffer.Write((ushort)uniqueIdList.Length);
+            _SinglePacketBufferWriter.WriteUShort((ushort)uniqueIdList.Length);
             for (int i = 0; i < uniqueIdList.Length; i++)
             {
                 if (GetPlayerIdByUniqueId(uniqueIdList[i], out ushort playerId))
                 {
-                    _SinglePacketBuffer.Write(playerId);
+                    _SinglePacketBufferWriter.WriteUShort(playerId);
                 }
             }
-            _SinglePacketBuffer.Write((ushort)data.Length);
-            _SinglePacketBuffer.WriteBytes(dataPtr, dataLength);
+            _SinglePacketBufferWriter.WriteUShort((ushort)data.Length);
+            _SinglePacketBufferWriter.WriteBytes(dataPtr, dataLength);
         }
 
         /// <summary>
         /// 全Playerにパケットを送信
         /// </summary>
-        public virtual void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false)
+        public virtual void Broadcast(NativeStreamWriter data, QosType qos, bool noChunk = false)
         {
 			//if (qos == QosType.Reliable)
 			//{
@@ -514,11 +524,11 @@ namespace ICKX.Radome
                 }
             }
         }
-        //public abstract void Send(ushort targetPlayerId, DataStreamWriter data, QosType qos);
-        //public abstract void Send(ulong targetUniqueId, DataStreamWriter data, QosType qos);
-        //public abstract void Multicast(NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos);
-        //public abstract void Multicast(NativeList<ulong> uniqueIdList, DataStreamWriter data, QosType qos);
-        //public abstract void Broadcast(DataStreamWriter data, QosType qos, bool noChunk = false);
+        //public abstract void Send(ushort targetPlayerId, NativeStreamWriter data, QosType qos);
+        //public abstract void Send(ulong targetUniqueId, NativeStreamWriter data, QosType qos);
+        //public abstract void Multicast(NativeList<ushort> playerIdList, NativeStreamWriter data, QosType qos);
+        //public abstract void Multicast(NativeList<ulong> uniqueIdList, NativeStreamWriter data, QosType qos);
+        //public abstract void Broadcast(NativeStreamWriter data, QosType qos, bool noChunk = false);
     }
 		
 	public abstract class GenericNetworkManagerBase<ConnIdType, PlayerInfo> : NetworkManagerBase
@@ -781,9 +791,9 @@ namespace ICKX.Radome
 			return null;
 		}
 
-		protected abstract void SendToConnIdImmediately(ConnIdType connId, DataStreamWriter packet, bool reliable);
+		protected abstract void SendToConnIdImmediately(ConnIdType connId, NativeStreamWriter packet, bool reliable);
 
-		protected void BroadcastImmediately(DataStreamWriter packet, bool reliable)
+		protected void BroadcastImmediately(NativeStreamWriter packet, bool reliable)
 		{
 			foreach (var connId in _ConnIdUniqueIdable.Keys)
 			{
@@ -823,6 +833,6 @@ namespace ICKX.Radome
 		/// <param name="chunk"></param>
 		/// <param name="ctx2"></param>
 		/// <returns>接続終了でパケット解析を止める場合はtrue</returns>
-		protected abstract bool DeserializePacket(ConnIdType senderId, ulong uniqueId, byte type, ref DataStreamReader chunk, ref DataStreamReader.Context ctx2);
+		protected abstract bool DeserializePacket(ConnIdType senderId, ulong uniqueId, byte type, NativeStreamReader chunk);
 	}
 }

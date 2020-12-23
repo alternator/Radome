@@ -112,8 +112,11 @@ namespace ICKX.Radome {
 				onReserveNetId (count);
 			} else {
 				uncheckReserveNetIdCallbacks.Add (onReserveNetId);
-				using (var packet = new DataStreamWriter (1, Allocator.Temp)) {
-					packet.Write ((byte)BuiltInPacket.Type.ReserveNetId);
+
+				using (var array = new NativeArray<byte>(1, Allocator.Temp))
+				{
+					var packet = new NativeStreamWriter(array);
+					packet.WriteByte ((byte)BuiltInPacket.Type.ReserveNetId);
 					GamePacketManager.Send (0, packet, QosType.Reliable);
 				}
 			}
@@ -195,32 +198,32 @@ namespace ICKX.Radome {
 			RequestSyncAuthor (identity.sceneHash, identity.netId);
 		}
 
-		private static void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
+		private static void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader recievePacket) {
 			switch ((BuiltInPacket.Type)type) {
 				case BuiltInPacket.Type.ReserveNetId:
-					RecieveReserveNetId (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveReserveNetId (senderPlayerId, recievePacket);
 					break;
 				case BuiltInPacket.Type.ChangeAuthor:
-					int sceneHash = recievePacket.ReadInt (ref ctx);
-					ushort netId = recievePacket.ReadUShort (ref ctx);
-					ushort author = recievePacket.ReadUShort (ref ctx);
+					int sceneHash = recievePacket.ReadInt ();
+					ushort netId = recievePacket.ReadUShort ();
+					ushort author = recievePacket.ReadUShort ();
 					RecieveChangeAuthor (sceneHash, netId, author);
 					break;
 				case BuiltInPacket.Type.SyncAuthor:
-					int sceneHash2 = recievePacket.ReadInt (ref ctx);
-					ushort netId2 = recievePacket.ReadUShort (ref ctx);
+					int sceneHash2 = recievePacket.ReadInt ();
+					ushort netId2 = recievePacket.ReadUShort ();
 					RecieveSyncAuthor (sceneHash2, netId2);
 					break;
 				case BuiltInPacket.Type.SyncTransform:
-					RecieveSyncTransform (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveSyncTransform (senderPlayerId, recievePacket);
 					break;
 				case BuiltInPacket.Type.BehaviourRpc:
-					RecieveBehaviourRpc (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveBehaviourRpc (senderPlayerId, recievePacket);
 					break;
 			}
 		}
 
-		private static void RecieveReserveNetId (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
+		private static void RecieveReserveNetId (ushort senderPlayerId, NativeStreamReader recievePacket) {
 
 			if (GamePacketManager.IsLeader) {
 				//HostではNetIDの整合性を確認
@@ -228,14 +231,15 @@ namespace ICKX.Radome {
 				Instance.m_identityList.Add (null);
 
 				//Clientに通達する
-				using (var packet = new DataStreamWriter (3, Allocator.Temp)) {
-					packet.Write ((byte)BuiltInPacket.Type.ReserveNetId);
-					packet.Write (reserveNetId);
+				using (var array = new NativeArray<byte> (3, Allocator.Temp)) {
+					var packet = new NativeStreamWriter(array);
+					packet.WriteByte ((byte)BuiltInPacket.Type.ReserveNetId);
+					packet.WriteUShort (reserveNetId);
 					GamePacketManager.Send (senderPlayerId, packet, QosType.Reliable);
 				}
 			} else {
 				//確認されたauthorの変更を反映
-				ushort reserveNetId = recievePacket.ReadUShort (ref ctx);
+				ushort reserveNetId = recievePacket.ReadUShort ();
 				if (uncheckReserveNetIdCallbacks.Count > 0) {
 					uncheckReserveNetIdCallbacks[0] (reserveNetId);
 					uncheckReserveNetIdCallbacks.RemoveAt (0);
@@ -271,32 +275,32 @@ namespace ICKX.Radome {
 			}
 		}
 
-		private static void RecieveSyncTransform (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
-			int sceneHash = recievePacket.ReadInt (ref ctx);
-			ushort netId = recievePacket.ReadUShort (ref ctx);
+		private static void RecieveSyncTransform (ushort senderPlayerId, NativeStreamReader recievePacket) {
+			int sceneHash = recievePacket.ReadInt ();
+			ushort netId = recievePacket.ReadUShort ();
 
 			if (sceneHash == 0) {
-				Instance.RecieveSyncTransformInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+				Instance.RecieveSyncTransformInGroup (senderPlayerId, netId, recievePacket);
 			} else {
 				RecordableSceneIdentity sceneIdentity;
 				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
-					sceneIdentity.RecieveSyncTransformInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+					sceneIdentity.RecieveSyncTransformInGroup (senderPlayerId, netId, recievePacket);
 				} else {
 					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
 				}
 			}
 		}
 
-		private static void RecieveBehaviourRpc (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
-			int sceneHash = recievePacket.ReadInt (ref ctx);
-			ushort netId = recievePacket.ReadUShort (ref ctx);
+		private static void RecieveBehaviourRpc (ushort senderPlayerId, NativeStreamReader recievePacket) {
+			int sceneHash = recievePacket.ReadInt ();
+			ushort netId = recievePacket.ReadUShort ();
 
 			if (sceneHash == 0) {
-				Instance.RecieveBehaviourRpcInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+				Instance.RecieveBehaviourRpcInGroup (senderPlayerId, netId, recievePacket);
 			} else {
 				RecordableSceneIdentity sceneIdentity;
 				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
-					sceneIdentity.RecieveBehaviourRpcInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+					sceneIdentity.RecieveBehaviourRpcInGroup (senderPlayerId, netId, recievePacket);
 				} else {
 					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
 				}

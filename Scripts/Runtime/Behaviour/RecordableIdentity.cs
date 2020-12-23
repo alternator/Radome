@@ -1,8 +1,11 @@
-﻿using System.Collections;
+﻿#pragma warning disable 0649
+using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Networking.Transport;
+#if !UNITY_2019_3_OR_NEWER
 using Unity.Networking.Transport.LowLevel.Unsafe;
+#endif
 using UnityEngine;
 using UnityEngine.Assertions;
 #if UNITY_EDITOR
@@ -136,65 +139,72 @@ namespace ICKX.Radome {
             return (byte)m_recordableComponentList.Count;
         }
 
-        public void SendRpc (ushort targetPlayerId, byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
+        public void SendRpc (ushort targetPlayerId, byte componentIndex, byte methodId, NativeStreamWriter rpcPacket, QosType qosType, bool important) {
             if (!isSyncComplete) return;
 
-			var writer = new DataStreamWriter (rpcPacket.Length + 9, Allocator.Temp);
-			CreateRpcPacket (ref writer, ref rpcPacket, componentIndex, methodId);
-			GamePacketManager.Send (targetPlayerId, writer, qosType);
-            //if (important) {
-            //    GamePacketManager.Send (playerId, writer, qosType);
-            //} else {
-            //    GamePacketManager.Send (playerId, writer, qosType, gridId);
-            //}
-			writer.Dispose ();
+			using (var array = new NativeArray<byte>(rpcPacket.Length + 9, Allocator.Temp))
+			{
+				var writer = new NativeStreamWriter(array);
+				CreateRpcPacket(writer, rpcPacket, componentIndex, methodId);
+				GamePacketManager.Send(targetPlayerId, writer, qosType);
+
+				//if (important) {
+				//    GamePacketManager.Send (playerId, writer, qosType);
+				//} else {
+				//    GamePacketManager.Send (playerId, writer, qosType, gridId);
+				//}
+			}
 		}
 
-		public void BrodcastRpc (byte componentIndex, byte methodId, DataStreamWriter rpcPacket, QosType qosType, bool important) {
+		public void BrodcastRpc (byte componentIndex, byte methodId, NativeStreamWriter rpcPacket, QosType qosType, bool important) {
             if (!isSyncComplete) return;
-            var writer = new DataStreamWriter (rpcPacket.Length + 9, Allocator.Temp);
-			CreateRpcPacket (ref writer, ref rpcPacket, componentIndex, methodId);
-			GamePacketManager.Brodcast (writer, qosType);
-			//if (important) {
-			//    GamePacketManager.Brodcast (writer, qosType);
-			//} else {
-			//    GamePacketManager.Brodcast (writer, qosType, gridId);
-			//}
-			writer.Dispose ();
+
+			using (var array = new NativeArray<byte>(rpcPacket.Length + 9, Allocator.Temp))
+			{
+				var writer = new NativeStreamWriter(array);
+				CreateRpcPacket(writer, rpcPacket, componentIndex, methodId);
+				GamePacketManager.Brodcast(writer, qosType);
+
+				//if (important) {
+				//    GamePacketManager.Brodcast (writer, qosType);
+				//} else {
+				//    GamePacketManager.Brodcast (writer, qosType, gridId);
+				//}
+			}
         }
 
 		//TODO できればScene単位でパケットをまとめて、type(1byte) sceneHash(4byte)の5byteのデータを削減したい
-		private void CreateRpcPacket (ref DataStreamWriter writer, ref DataStreamWriter rpcPacket, byte componentIndex, byte methodId) {
+		private void CreateRpcPacket ( NativeStreamWriter writer, NativeStreamWriter rpcPacket, byte componentIndex, byte methodId) {
 			unsafe {
-				byte* dataPtr = DataStreamUnsafeUtility.GetUnsafeReadOnlyPtr (rpcPacket);
-				writer.Write ((byte)BuiltInPacket.Type.BehaviourRpc);
-				writer.Write (sceneHash);
-				writer.Write (netId);
-				writer.Write (componentIndex);
-				writer.Write (methodId);
+				byte* dataPtr = rpcPacket.GetUnsafePtr();
+				writer.WriteByte ((byte)BuiltInPacket.Type.BehaviourRpc);
+				writer.WriteInt (sceneHash);
+				writer.WriteUShort (netId);
+				writer.WriteByte (componentIndex);
+				writer.WriteByte (methodId);
 				writer.WriteBytes (dataPtr, rpcPacket.Length);
 			}
 		}
 
-		internal void OnRecieveSyncTransformPacket (ushort senderPlayerId, ref DataStreamReader packet, ref DataStreamReader.Context ctx) {
+		internal void OnRecieveSyncTransformPacket (ushort senderPlayerId, NativeStreamReader packet) {
             if (!isSyncComplete) return;
 
             if (CacheRecordableTransform) {
-                CacheRecordableTransform.OnRecieveSyncTransformPacket (senderPlayerId, ref packet, ref ctx);
+                CacheRecordableTransform.OnRecieveSyncTransformPacket (senderPlayerId, packet);
             }
         }
 
 
-        internal void OnRecieveRpcPacket (ushort senderPlayerId, ref DataStreamReader rpcPacket, ref DataStreamReader.Context ctx) {
+        internal void OnRecieveRpcPacket (ushort senderPlayerId, NativeStreamReader rpcPacket) {
             if (!isSyncComplete) return;
 
-            byte componentIndex = rpcPacket.ReadByte(ref ctx);
-            byte methodId = rpcPacket.ReadByte (ref ctx);
+            byte componentIndex = rpcPacket.ReadByte();
+            byte methodId = rpcPacket.ReadByte ();
 
             if (componentIndex < m_recordableComponentList.Count) {
                 var behaviour = m_recordableComponentList[componentIndex];
                 if (behaviour == null) return;
-                behaviour.OnRecieveRpcPacket (senderPlayerId, methodId, rpcPacket, ctx);
+                behaviour.OnRecieveRpcPacket (senderPlayerId, methodId, rpcPacket);
             }
         }
 
@@ -202,11 +212,11 @@ namespace ICKX.Radome {
         /// 
         /// </summary>
         /// <param name="syncPacket"></param>
-        internal void CollectSyncVarPacket (ref DataStreamWriter syncPacket) {
+        internal void CollectSyncVarPacket (ref NativeStreamWriter syncPacket) {
             //あとで作る
         }
 
-        internal void ApplySyncVarPacket (ref DataStreamReader syncPacket, ref DataStreamReader.Context ctx) {
+        internal void ApplySyncVarPacket (ref NativeStreamReader syncPacket) {
             //あとで作る
         }
 

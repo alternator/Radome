@@ -45,20 +45,20 @@ namespace ICKX.Radome {
 			public NetworkConnection connection;
 
 			[ReadOnly]
-			public DataStreamWriter packetChunks;
+			public NativeStreamWriter packetChunks;
 			[ReadOnly]
 			public NativeList<ushort> packetLengths;
 
 			public void Execute () {
-				var reader = new DataStreamReader (packetChunks, 0, packetChunks.Length);
-				var ctx = default (DataStreamReader.Context);
+				var reader = new NativeStreamReader (packetChunks, 0, packetChunks.Length);
+				var ctx = default (NativeStreamReader.Context);
 
 				for (int i = 0; i < packetLengths.Length; i++) {
 					ushort packetDataLen = packetLengths[i];
 					if (packetDataLen == 0) continue;
 					var packet = reader.ReadChunk (ref ctx, packetDataLen);
 
-					using (var temp = new DataStreamWriter (packetDataLen, Allocator.Temp)) {
+					using (var temp = new NativeStreamWriter (packetDataLen, Allocator.Temp)) {
 						unsafe {
 							byte* packetPtr = packet.GetUnsafeReadOnlyPtr ();
 							temp.WriteBytes (packetPtr, packetDataLen);
@@ -80,27 +80,27 @@ namespace ICKX.Radome {
 			public NativeArray<ushort> seqNumbers;
 
 			[ReadOnly]
-			public DataStreamWriter packetChunks;
+			public NativeStreamWriter packetChunks;
 			[ReadOnly]
 			public NativeList<ushort> packetLengths;
 
 			public NativeArray<int> uncheckedPacketCount;
-			public DataStreamWriter uncheckedPacketsWriter;
-			public DataStreamWriter uncheckedNewPacketsWriter;
+			public NativeStreamWriter uncheckedPacketsWriter;
+			public NativeStreamWriter uncheckedNewPacketsWriter;
 
 			[ReadOnly]
 			public int currentFrame;
 
 			public unsafe void Execute () {
-				var reader = new DataStreamReader (packetChunks, 0, packetChunks.Length);
-				var ctx = default (DataStreamReader.Context);
+				var reader = new NativeStreamReader (packetChunks, 0, packetChunks.Length);
+				var ctx = default (NativeStreamReader.Context);
 
 				for (int i = 0; i < packetLengths.Length; i++) {
 					ushort packetDataLen = packetLengths[i];
 					if (packetDataLen == 0) continue;
 					var packet = reader.ReadChunk (ref ctx, packetDataLen);
 
-					var temp = new DataStreamWriter (packetDataLen, Allocator.Temp);
+					var temp = new NativeStreamWriter (packetDataLen, Allocator.Temp);
 					unsafe {
 						byte* packetPtr = packet.GetUnsafeReadOnlyPtr ();
 						temp.WriteBytes (packetPtr, packetDataLen);
@@ -131,8 +131,8 @@ namespace ICKX.Radome {
 			public NativeArray<ushort> seqNumbers;
 
 			public NativeArray<int> uncheckedPacketCount;
-			public DataStreamWriter uncheckedPacketsWriter;
-			public DataStreamWriter uncheckedNewPacketsWriter;
+			public NativeStreamWriter uncheckedPacketsWriter;
+			public NativeStreamWriter uncheckedNewPacketsWriter;
 
 			[ReadOnly]
 			public int currentFrame;
@@ -151,8 +151,8 @@ namespace ICKX.Radome {
 					//受け取り確認パケットの解放
 					ushort releaseCount = (ushort)(otherAckNum - oldestSeqNum + 1);
 
-					var uncheckedPacketsReader = new DataStreamReader (uncheckedPacketsWriter, 0, uncheckedPacketsWriter.Length);
-					var ctx = new DataStreamReader.Context ();
+					var uncheckedPacketsReader = new NativeStreamReader (uncheckedPacketsWriter, 0, uncheckedPacketsWriter.Length);
+					var ctx = new NativeStreamReader.Context ();
 
 					//Debug.Log ($"otherAckNum={otherAckNum}, oldestSeqNum={oldestSeqNum}, currentSeqNum={currentSeqNum}, releaseCount={releaseCount}, PacketCount={uncheckedPacketCount[0]}");
 
@@ -174,7 +174,7 @@ namespace ICKX.Radome {
 							releasePos += 6 + size;
 						}
 					}
-					uncheckedPacketsReader = new DataStreamReader (uncheckedPacketsWriter, releasePos, uncheckedPacketsWriter.Length - releasePos);
+					uncheckedPacketsReader = new NativeStreamReader (uncheckedPacketsWriter, releasePos, uncheckedPacketsWriter.Length - releasePos);
 					if (uncheckedNewPacketsWriter.Capacity < uncheckedPacketsReader.Length) {
 						uncheckedNewPacketsWriter.Capacity = uncheckedPacketsReader.Length;
 					}
@@ -191,8 +191,8 @@ namespace ICKX.Radome {
 
                     bool isUncheckTimeOut = false;
                     //受け取り確認できてないパケットを再送
-                    uncheckedPacketsReader = new DataStreamReader(uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
-                    ctx = new DataStreamReader.Context();
+                    uncheckedPacketsReader = new NativeStreamReader(uncheckedNewPacketsWriter, 0, uncheckedNewPacketsWriter.Length);
+                    ctx = new NativeStreamReader.Context();
                     for (int i = 0; i < uncheckedPacketCount[0]; i++)
                     {
                         var size = uncheckedPacketsReader.ReadUShort(ref ctx);
@@ -213,7 +213,7 @@ namespace ICKX.Radome {
                             //	Debug.Log ("ResendUncheckedPacket : index=" + i + ", frameCount=" + frameCount);
                             //}
                             //時間が経つごとに送信間隔を開ける n乗のフレームの時だけ送る
-                            using (var temp = new DataStreamWriter(size, Allocator.Temp))
+                            using (var temp = new NativeStreamWriter(size, Allocator.Temp))
                             {
                                 temp.WriteBytes(chunk.GetUnsafeReadOnlyPtr(), size);
                                 connection.Send(driver, temp);
@@ -257,26 +257,26 @@ namespace ICKX.Radome {
 			public NativeArray<ushort> seqNumbers;
 			public NativeArray<byte> flags;
 
-			public DataStreamWriter savedUncheckedReliableDataStream;
-			public DataStreamWriter tempUncheckedReliableDataStream;
+			public NativeStreamWriter savedUncheckedReliableDataStream;
+			public NativeStreamWriter tempUncheckedReliableDataStream;
 
-			public NativeList<DataStreamReader> dataStreams;
-			public NativeList<DataStreamReader> uncheckedreliableStreams;
+			public NativeList<NativeStreamReader> dataStreams;
+			public NativeList<NativeStreamReader> uncheckedreliableStreams;
 
 			public void Execute () {
-				DataStreamReader stream;
+				NativeStreamReader stream;
 				NetworkEvent.Type cmd;
 
 				//前フレームで解決できなかったbufferedからuncheckedに登録.
 				if (!savedUncheckedReliableDataStream.IsCreated) {
-					stream = new DataStreamReader (savedUncheckedReliableDataStream, 0, savedUncheckedReliableDataStream.Length);
+					stream = new NativeStreamReader (savedUncheckedReliableDataStream, 0, savedUncheckedReliableDataStream.Length);
 					int offset = 0;
 					while (offset < savedUncheckedReliableDataStream.Length) {
-						var readerCtx = default (DataStreamReader.Context);
+						var readerCtx = default (NativeStreamReader.Context);
 						ushort length = stream.ReadUShort (ref readerCtx);
 						if (0 < length && length <= savedUncheckedReliableDataStream.Length - offset - 2) {
 							uncheckedreliableStreams.Add (
-								new DataStreamReader (savedUncheckedReliableDataStream, offset + 2, length));
+								new NativeStreamReader (savedUncheckedReliableDataStream, offset + 2, length));
 							offset += length + 2;
 						} else {
 							break;
@@ -296,7 +296,7 @@ namespace ICKX.Radome {
 							continue;
 						}
 
-						var readerCtx = default (DataStreamReader.Context);
+						var readerCtx = default (NativeStreamReader.Context);
 						byte qosType = stream.ReadByte (ref readerCtx);
 						ushort seqNum = stream.ReadUShort (ref readerCtx);
 						ushort ackNum = stream.ReadUShort (ref readerCtx);
@@ -442,23 +442,23 @@ namespace ICKX.Radome {
 		private NativeArray<byte> flags;
 		private NativeArray<ushort> latencyLog;
 
-		private DataStreamWriter uncheckedRecieveReliableDataStream;
-		private DataStreamWriter tempRecieveReliableDataStream;
+		private NativeStreamWriter uncheckedRecieveReliableDataStream;
+		private NativeStreamWriter tempRecieveReliableDataStream;
 
-		public NativeList<DataStreamReader> dataStreams;
+		public NativeList<NativeStreamReader> dataStreams;
 
-		private NativeList<DataStreamReader> uncheckedreliableStreams;
+		private NativeList<NativeStreamReader> uncheckedreliableStreams;
 
 		public JobHandle LinkerJobHandle;
 
 		private NativeArray<int> uncheckedSelfReliablePacketCountBuffer;
-		private DataStreamWriter uncheckedSelfReliablePacketsWriter;
-		private DataStreamWriter uncheckedNewSelfReliablePacketsWriter;
+		private NativeStreamWriter uncheckedSelfReliablePacketsWriter;
+		private NativeStreamWriter uncheckedNewSelfReliablePacketsWriter;
 
-		private DataStreamWriter[] singlePacketsQosTable;
+		private NativeStreamWriter[] singlePacketsQosTable;
 		private NativeList<ushort>[] singlePacketLengthsQosTable;
 
-		private DataStreamWriter[] chunkedPacketsQosTable;
+		private NativeStreamWriter[] chunkedPacketsQosTable;
 		private NativeList<ushort>[] chunkedPacketLengthsQosTable;
 		private ushort[] chunkedPacketCountQosTable;
 
@@ -472,25 +472,25 @@ namespace ICKX.Radome {
 			latencyLog = new NativeArray<ushort> (16, Allocator.Persistent);
 
 			uncheckedSelfReliablePacketCountBuffer = new NativeArray<int> (1, Allocator.Persistent);
-			uncheckedSelfReliablePacketsWriter = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
-			uncheckedNewSelfReliablePacketsWriter = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
+			uncheckedSelfReliablePacketsWriter = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
+			uncheckedNewSelfReliablePacketsWriter = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
 
-			uncheckedRecieveReliableDataStream = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
-			tempRecieveReliableDataStream = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
-			dataStreams = new NativeList<DataStreamReader> (32, Allocator.Persistent);
-			uncheckedreliableStreams = new NativeList<DataStreamReader> (32, Allocator.Persistent);
+			uncheckedRecieveReliableDataStream = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
+			tempRecieveReliableDataStream = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
+			dataStreams = new NativeList<NativeStreamReader> (32, Allocator.Persistent);
+			uncheckedreliableStreams = new NativeList<NativeStreamReader> (32, Allocator.Persistent);
 
-			singlePacketsQosTable = new DataStreamWriter[(int)QosType.ChunkEnd - 1];
+			singlePacketsQosTable = new NativeStreamWriter[(int)QosType.ChunkEnd - 1];
 			singlePacketLengthsQosTable = new NativeList<ushort>[(int)QosType.ChunkEnd - 1];
-			chunkedPacketsQosTable = new DataStreamWriter[(int)QosType.ChunkEnd - 1];
+			chunkedPacketsQosTable = new NativeStreamWriter[(int)QosType.ChunkEnd - 1];
 			chunkedPacketLengthsQosTable = new NativeList<ushort>[(int)QosType.ChunkEnd - 1];
 
 			for (int i = 0; i < (int)QosType.ChunkEnd - 1; i++) {
-				singlePacketsQosTable[i] = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
+				singlePacketsQosTable[i] = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
 				singlePacketLengthsQosTable[i] = new NativeList<ushort> (32, Allocator.Persistent);
 				singlePacketLengthsQosTable[i].Add (default);
 
-				chunkedPacketsQosTable[i] = new DataStreamWriter (ushort.MaxValue, Allocator.Persistent);
+				chunkedPacketsQosTable[i] = new NativeStreamWriter (ushort.MaxValue, Allocator.Persistent);
 				chunkedPacketLengthsQosTable[i] = new NativeList<ushort> (32, Allocator.Persistent);
 				chunkedPacketLengthsQosTable[i].Add (default);
 			}
@@ -538,7 +538,7 @@ namespace ICKX.Radome {
 			}
 		}
 
-		public ushort Send (DataStreamWriter data, QosType qos, ushort targetPlayerId, ushort senderPlayerId, bool noChunk) {
+		public ushort Send (NativeStreamWriter data, QosType qos, ushort targetPlayerId, ushort senderPlayerId, bool noChunk) {
 			Assert.IsTrue (LinkerJobHandle.IsCompleted);
 			if (!LinkerJobHandle.IsCompleted) {
 				throw new System.NotSupportedException ("Update/LateUpdate/FixedUpdateでのみSendメソッドは利用できます");
@@ -615,7 +615,7 @@ namespace ICKX.Radome {
 		public void SendMeasureLatencyPacket () {
 			if (!EnableConnection) return;
 
-			using (var writer = new DataStreamWriter (13, Allocator.Temp)) {
+			using (var writer = new NativeStreamWriter (13, Allocator.Temp)) {
 				writer.Write ((byte)QosType.MeasureLatency);
 				writer.Write ((ushort)0);
 				writer.Write (seqNumbers[(int)SeqNumberDef.SelfAck]);
