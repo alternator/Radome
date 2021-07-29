@@ -154,20 +154,21 @@ namespace ICKX.Radome {
 			}
 
 			//TODO できればScene単位でパケットをまとめて、type(1byte) sceneHash(4byte)の5byteのデータを削減したい
-			using (var packet = new DataStreamWriter (65, Allocator.Temp)) {
-				packet.Write ((byte)BuiltInPacket.Type.SyncTransform);
-				packet.Write (CacheRecordableIdentity.sceneHash);
-				packet.Write (CacheRecordableIdentity.netId);
-				packet.Write (RecordableIdentityManager.progressTimeSinceStartup);
-				packet.Write (CacheTransform.position);
-				packet.Write (CacheTransform.rotation);
-
+			using (var array = new NativeArray<byte> (65, Allocator.Temp)) {
+				var packet = new NativeStreamWriter(array);
+				packet.WriteByte ((byte)BuiltInPacket.Type.SyncTransform);
+				packet.WriteInt (CacheRecordableIdentity.sceneHash);
+				packet.WriteUShort (CacheRecordableIdentity.netId);
+				packet.WriteUInt (RecordableIdentityManager.progressTimeSinceStartup);
+				packet.WriteVector3 (CacheTransform.position);
+				packet.WriteQuaternion(CacheTransform.rotation);
+				
 				if (CacheRigidbody != null) {
-					packet.Write (CacheRigidbody.velocity);
-					packet.Write (CacheRigidbody.angularVelocity);
+					packet.WriteVector3(CacheRigidbody.velocity);
+					packet.WriteVector3(CacheRigidbody.angularVelocity);
 				} else {
-					packet.Write (Vector3.zero);
-					packet.Write (Vector3.zero);
+					packet.WriteVector3(Vector3.zero);
+					packet.WriteVector3(Vector3.zero);
 				}
 
 				GamePacketManager.Brodcast (packet, qosType);
@@ -203,15 +204,15 @@ namespace ICKX.Radome {
 		/// NetowrkIdendtity経由でデータを送ってもらう
 		/// </summary>
 		/// <param name="packet"></param>
-		internal void OnRecieveSyncTransformPacket (ushort senderPlayerId, ref DataStreamReader packet, ref DataStreamReader.Context ctx) {
+		internal void OnRecieveSyncTransformPacket (ushort senderPlayerId, NativeStreamReader packet) {
 
 			if (CacheRecordableIdentity.hasAuthority) return;
 
-			var progressTime = packet.ReadUInt (ref ctx);
-			var position = packet.ReadVector3 (ref ctx);
-			var rotation = packet.ReadQuaternion (ref ctx);
-			var velocity = packet.ReadVector3 (ref ctx);
-			var anglerVelocity = packet.ReadVector3 (ref ctx);
+			var progressTime = packet.ReadUInt ();
+			var position = packet.ReadVector3 ();
+			var rotation = packet.ReadQuaternion ();
+			var velocity = packet.ReadVector3 ();
+			var anglerVelocity = packet.ReadVector3 ();
 
 			//progressTime < prevReceiveTimeで止まる対策
 			//UDPで2秒以上送れることはほぼないので、その場合はprevReceiveTimeをリセット

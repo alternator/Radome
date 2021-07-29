@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using Unity.Networking.Transport;
 using UnityEngine;
-using UpdateLoop = UnityEngine.Experimental.PlayerLoop.Update;
+using UpdateLoop = UnityEngine.PlayerLoop.Update;
+#if !UNITY_2019_3_OR_NEWER
 using UnityEngine.Experimental.LowLevel;
+#endif
 using System.Security.Cryptography;
 using Unity.Collections;
 using System.IO;
@@ -59,17 +61,19 @@ namespace ICKX.Radome {
 			transporter.targetPlayerId = playerId;
 			transporter.name = name;
 
-            int nameByteCount = DataStreamWriter.GetByteSizeStr (name);
+            int nameByteCount = NativeStreamWriter.GetByteSizeStr (name);
 			int dataSize = NetworkLinkerConstants.MaxPacketSize - HeaderSize - 13 - nameByteCount;
 			unsafe {
 				fixed ( byte* dataPtr = &data[transporter.pos]) {
-					using (var writer = new DataStreamWriter (dataSize + 13 + nameByteCount, Allocator.Temp)) {
-						writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
-						writer.Write ((byte)TransporterType.LargeBytes);
-						writer.Write (hash);
-						writer.Write ((byte)FlagDef.Start);
-						writer.Write (name);
-						writer.Write (data.Length);
+					using (var array = new NativeArray<byte>(dataSize + 13 + nameByteCount, Unity.Collections.Allocator.Temp))
+					{
+						var writer = new NativeStreamWriter(array);
+						writer.WriteByte ((byte)BuiltInPacket.Type.DataTransporter);
+						writer.WriteByte((byte)TransporterType.LargeBytes);
+						writer.WriteInt (hash);
+						writer.WriteByte((byte)FlagDef.Start);
+						writer.WriteString (name);
+						writer.WriteInt(data.Length);
 						writer.WriteBytes (dataPtr, dataSize);
 
 						if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
@@ -115,11 +119,13 @@ namespace ICKX.Radome {
 					}
 					unsafe {
 						fixed (byte* dataPtr = &transporter.data[transporter.pos]) {
-							using (var writer = new DataStreamWriter (dataSize + 7, Allocator.Temp)) {
-								writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
-								writer.Write ((byte)TransporterType.LargeBytes);
-								writer.Write (transporter.hash);
-								writer.Write ((byte)flag);
+							using (var array = new NativeArray<byte>(dataSize + 7, Unity.Collections.Allocator.Temp))
+							{
+								var writer = new NativeStreamWriter(array);
+								writer.WriteByte ((byte)BuiltInPacket.Type.DataTransporter);
+								writer.WriteByte ((byte)TransporterType.LargeBytes);
+								writer.WriteInt(transporter.hash);
+								writer.WriteByte ((byte)flag);
 								writer.WriteBytes (dataPtr, dataSize);
 
 								if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
@@ -150,26 +156,26 @@ namespace ICKX.Radome {
 			}
 		}
 
-		protected override LargeBytesTransporter RecieveStart (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx) {
-			string name = stream.ReadString (ref ctx);
-			int dataSize = stream.ReadInt (ref ctx);
+		protected override LargeBytesTransporter RecieveStart (int hash, NativeStreamReader stream) {
+			string name = stream.ReadString ();
+			int dataSize = stream.ReadInt ();
 			var transporter = new LargeBytesTransporter (hash, new byte[dataSize]);
 			transporter.name = name;
-			int fragmentSize = stream.Length - stream.GetBytesRead(ref ctx);
+			int fragmentSize = stream.Length - stream.GetBytesRead();
 			unsafe {
 				fixed (byte* data = &transporter.data[transporter.pos]) {
-					stream.ReadBytes (ref ctx, data, fragmentSize);
+					stream.ReadBytes (data, fragmentSize);
 					transporter.pos += fragmentSize;
 				}
 			}
 			return transporter;
 		}
 
-		protected override void RecieveFragmentData (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx, LargeBytesTransporter transporter) {
-			int fragmentSize = stream.Length - stream.GetBytesRead (ref ctx);
+		protected override void RecieveFragmentData (int hash, NativeStreamReader stream, LargeBytesTransporter transporter) {
+			int fragmentSize = stream.Length - stream.GetBytesRead ();
 			unsafe {
 				fixed (byte* data = &transporter.data[transporter.pos]) {
-					stream.ReadBytes (ref ctx, data, fragmentSize);
+					stream.ReadBytes (data, fragmentSize);
 					transporter.pos += fragmentSize;
 				}
 			}

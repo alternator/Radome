@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Networking.Transport;
 using UnityEngine;
-using UnityEngine.Experimental.LowLevel;
+
 using static ICKX.Radome.NetworkManagerBase;
-using UpdateLoop = UnityEngine.Experimental.PlayerLoop.Update;
+using UpdateLoop = UnityEngine.PlayerLoop.Update;
 
 namespace ICKX.Radome {
 
@@ -18,7 +18,7 @@ namespace ICKX.Radome {
 		static void Initialize () {
 			localStartTime = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds ();
 
-			CustomPlayerLoopUtility.InsertLoopFirst(typeof(UpdateLoop), new PlayerLoopSystem() {
+			CustomPlayerLoopUtility.InsertLoopFirst(typeof(UpdateLoop), new UnityEngine.LowLevel.PlayerLoopSystem() {
 				type = typeof(GamePacketManagerUpdate),
 				updateDelegate = Update
 			});
@@ -192,21 +192,21 @@ namespace ICKX.Radome {
 
 		private static void ExecOnUnregisterPlayer (ushort playerId, ulong uniqueId) { OnUnregisterPlayer?.Invoke (playerId, uniqueId); }
 
-		private static void ExecOnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader stream, DataStreamReader.Context ctx) {
-			OnRecievePacket?.Invoke (senderPlayerId, senderUniqueId, type, stream, ctx);
+		private static void ExecOnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader stream) {
+			OnRecievePacket?.Invoke (senderPlayerId, senderUniqueId, type, stream);
 		}
 
-		public static void Send (ushort playerId, DataStreamWriter data, QosType qos) {
+		public static void Send (ushort playerId, NativeStreamWriter data, QosType qos) {
 			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Send (playerId, data, qos);
 		}
 
-		public static void Multicast (NativeList<ushort> playerIdList, DataStreamWriter data, QosType qos) {
+		public static void Multicast (NativeList<ushort> playerIdList, NativeStreamWriter data, QosType qos) {
 			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Multicast (playerIdList, data, qos);
 		}
 
-		public static void Brodcast (DataStreamWriter data, QosType qos, bool noChunk = false) {
+		public static void Brodcast (NativeStreamWriter data, QosType qos, bool noChunk = false) {
 			if (NetworkManager == null || NetworkManager.NetworkState == NetworkConnection.State.Disconnected) return;
 			NetworkManager.Broadcast (data, qos, noChunk);
 		}

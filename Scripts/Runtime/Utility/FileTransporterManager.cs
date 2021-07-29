@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using Unity.Networking.Transport;
 using UnityEngine;
-using UpdateLoop = UnityEngine.Experimental.PlayerLoop.Update;
+using UpdateLoop = UnityEngine.PlayerLoop.Update;
+#if !UNITY_2019_3_OR_NEWER
 using UnityEngine.Experimental.LowLevel;
+#endif
 using System.Security.Cryptography;
 using Unity.Collections;
 using System.IO;
@@ -83,7 +85,7 @@ namespace ICKX.Radome {
 		{
 			fileStream.Seek(0, SeekOrigin.Begin);
 
-			int nameByteCount = DataStreamWriter.GetByteSizeStr(fileName);
+			int nameByteCount = NativeStreamWriter.GetByteSizeStr(fileName);
 			int dataSize = NetworkLinkerConstants.MaxPacketSize - HeaderSize - 15 - nameByteCount;
 			int readSize = await fileStream.ReadAsync(transporter.buffer, 0, dataSize);
 			//Debug.Log ("Start : " + string.Join ("", transporter.buffer));
@@ -92,15 +94,16 @@ namespace ICKX.Radome {
 			{
 				fixed (byte* dataPtr = transporter.buffer)
 				{
-					using (var writer = new DataStreamWriter(dataSize + 15 + nameByteCount, Allocator.Temp))
+					using (var array = new NativeArray<byte>(dataSize + 15 + nameByteCount, Unity.Collections.Allocator.Temp))
 					{
-						writer.Write((byte)BuiltInPacket.Type.DataTransporter);
-						writer.Write((byte)TransporterType.File);
-						writer.Write(transporter.hash);
-						writer.Write((byte)FlagDef.Start);
-						writer.Write(fileName);
-						writer.Write((int)fileStream.Length);
-						writer.Write((ushort)dataSize);
+						var writer = new NativeStreamWriter(array);
+						writer.WriteByte((byte)BuiltInPacket.Type.DataTransporter);
+						writer.WriteByte((byte)TransporterType.File);
+						writer.WriteInt(transporter.hash);
+						writer.WriteByte((byte)FlagDef.Start);
+						writer.WriteString(fileName);
+						writer.WriteInt((int)fileStream.Length);
+						writer.WriteUShort((ushort)dataSize);
 						writer.WriteBytes(dataPtr, dataSize);
 
 						if (transporter.targetPlayerId == NetworkLinkerConstants.BroadcastId)
@@ -159,11 +162,13 @@ namespace ICKX.Radome {
 
 					unsafe {
 						fixed (byte* dataPtr = &transporter.buffer[sendAmount]) {
-							using (var writer = new DataStreamWriter (dataSize + 7, Allocator.Temp)) {
-								writer.Write ((byte)BuiltInPacket.Type.DataTransporter);
-								writer.Write ((byte)TransporterType.File);
-								writer.Write (transporter.hash);
-								writer.Write ((byte)flag);
+							using (var array = new NativeArray<byte>(dataSize + 7, Allocator.Temp))
+							{
+								var writer = new NativeStreamWriter(array);
+								writer.WriteByte ((byte)BuiltInPacket.Type.DataTransporter);
+								writer.WriteByte ((byte)TransporterType.File);
+								writer.WriteInt (transporter.hash);
+								writer.WriteByte ((byte)flag);
 								//writer.Write ((ushort)dataSize);
 								writer.WriteBytes (dataPtr, dataSize);
 
@@ -203,15 +208,15 @@ namespace ICKX.Radome {
 			transporter.isAwait = false;
 		}
 
-		protected override FileTransporter RecieveStart (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx) {
+		protected override FileTransporter RecieveStart (int hash, NativeStreamReader stream) {
 			if(string.IsNullOrEmpty(SaveDirectory)) {
 				SaveDirectory = Application.persistentDataPath + "/RecieveFile";
 				System.IO.Directory.CreateDirectory (SaveDirectory);
 			}
 
-			string fileName = stream.ReadString (ref ctx);
-			int fileSize = stream.ReadInt (ref ctx);
-			ushort dataSize = stream.ReadUShort (ref ctx);
+			string fileName = stream.ReadString ();
+			int fileSize = stream.ReadInt ();
+			ushort dataSize = stream.ReadUShort ();
 
 			string path = SaveDirectory + "/" + hash + "_" + fileName;
 			FileStream fs = new FileStream (path, FileMode.Create, FileAccess.ReadWrite);
@@ -220,15 +225,15 @@ namespace ICKX.Radome {
 
 			unsafe {
 				fixed (byte* data = transporter.buffer) {
-					stream.ReadBytes (ref ctx, data, dataSize);
+					stream.ReadBytes (data, dataSize);
 					transporter.bufferPos += dataSize;
 				}
 			}
 			return transporter;
 		}
 
-		protected override void RecieveFragmentData (int hash, DataStreamReader stream, ref DataStreamReader.Context ctx, FileTransporter transporter) {
-			int fragmentSize = stream.Length - stream.GetBytesRead (ref ctx);
+		protected override void RecieveFragmentData (int hash, NativeStreamReader stream, FileTransporter transporter) {
+			int fragmentSize = stream.Length - stream.GetBytesRead ();
 
 			while(transporter.bufferPos + fragmentSize > transporter.buffer.Length) {
 				transporter.Resize (transporter.buffer.Length * 2);
@@ -237,7 +242,7 @@ namespace ICKX.Radome {
 
 			unsafe {
 				fixed (byte* data = &transporter.buffer[transporter.bufferPos]) {
-					stream.ReadBytes (ref ctx, data, fragmentSize);
+					stream.ReadBytes (data, fragmentSize);
 					transporter.bufferPos += fragmentSize;
 				}
 			}

@@ -4,6 +4,8 @@ using Unity.Collections;
 using Unity.Networking.Transport;
 using UnityEngine;
 using UnityEngine.Assertions;
+using System.Threading.Tasks;
+using Unity.Collections.LowLevel.Unsafe;
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -12,6 +14,13 @@ using UnityEditor.SceneManagement;
 namespace ICKX.Radome {
 
 	public class RecordableIdentityManager : RecordableGroupIdentity {
+
+		public enum SpawnState
+		{
+			Empty,
+			Reserve,
+			Spawned,
+		}
 
 		private static RecordableIdentityManager s_instance = null;
 		public static RecordableIdentityManager Instance {
@@ -28,10 +37,20 @@ namespace ICKX.Radome {
 				return s_instance;
 			}
 		}
+		
+		public delegate void OnSpawnIdentityEvent(RecordableIdentity spawnObj);
+		public delegate void OnDespawnIdentityEvent(RecordableIdentity despawnObj);
+
+		private static ushort m_DespawnedNetId;
+		private static List<SpawnState> m_SpawnStateList;
 
 		private static List<System.Action<ushort>> uncheckReserveNetIdCallbacks;
 
 		private static Dictionary<int, RecordableSceneIdentity> m_recordableSceneIdentitTable = new Dictionary<int, RecordableSceneIdentity>();
+
+		public static event OnSpawnIdentityEvent OnSpawnIdentity = null;
+		public static event OnDespawnIdentityEvent OnDespawnIdentity = null;
+
 
 		public static IReadOnlyDictionary<int, RecordableSceneIdentity> recordableSceneIdentityTable {
 			get { return m_recordableSceneIdentitTable; }
@@ -61,6 +80,7 @@ namespace ICKX.Radome {
 			if (isInitialized) return;
 			isInitialized = true;
 			DontDestroyOnLoad (s_instance.gameObject);
+			m_SpawnStateList = new List<SpawnState>();
 			uncheckReserveNetIdCallbacks = new List<System.Action<ushort>> (4);
 
 			if (m_identityList == null) {
@@ -68,6 +88,10 @@ namespace ICKX.Radome {
 			}else {
 				m_identityList.Clear ();
 			}
+
+			m_SpawnStateList.Add( SpawnState.Reserve);
+			m_identityList.Add(null);
+
 			m_groupHash = 0;
 
 			GamePacketManager.OnRecievePacket += OnRecievePacket;
@@ -101,19 +125,135 @@ namespace ICKX.Radome {
 			}
 		}
 
+		public delegate void CustomInstantiateDelegate(NativeArray<byte> spawnInfo, System.Action<RecordableIdentity, bool> callback);
+
+		public static event CustomInstantiateDelegate CustomSpawnMethod;
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="spawnInfo">Allocator.Temp以外で確保する(処理後にメソッド内でDisposeする)</param>
+		/// <param name="hasAuthor"></param>
+		/// <param name="callback"></param>
+		public static unsafe void RpcSpawn(NativeArray<byte> spawnInfo, bool hasAuthor, System.Action<RecordableIdentity, bool> callback)
+		{
+			if (CustomSpawnMethod == null) throw new System.InvalidOperationException("CustomSpawnMethodを登録してください");
+
+			if(GamePacketManager.IsLeader)
+			{
+				//クライアントに通知
+				CustomSpawnMethod(spawnInfo, (RecordableIdentity identity, bool success) =>
+				{
+					var netIdList = new NativeArray<ushort>(1 + identity.childrenIdentity.Count, Allocator.Temp);
+
+					//クライアントに送信
+
+
+
+					LocalSpawn(identity, netIdList, 0, callback);
+				});
+			}
+			else
+			{
+				//サーバーにリクエストを送り、返答後に生成
+
+			}
+
+			ReserveNetId((ushort netId) =>
+			{
+				using (var array = new NativeArray<byte>(spawnInfo.Length + 6, Allocator.Temp))
+				{
+					var writer = new NativeStreamWriter(array);
+					writer.WriteByte((byte)BuiltInPacket.Type.SpawnIdentity);
+					writer.WriteByte((byte)(hasAuthor ? 1 : 0));
+					writer.WriteUShort(netId);
+					writer.WriteUShort((ushort)spawnInfo.Length);
+					writer.WriteBytes((byte*)spawnInfo.GetUnsafeReadOnlyPtr(), spawnInfo.Length);
+					RecordablePacketManager.Brodcast(writer, QosType.Reliable);
+				}
+			});
+		}
+
+		private static unsafe void RecieveSpawnRequest (NativeArray<byte> spawnInfo, ushort netId, ushort author)
+		{
+			//
+			CustomSpawnMethod(spawnInfo, (RecordableIdentity identity, bool success) =>
+			{
+				var needNetIdCount = 1 + identity.childrenIdentity.Count;
+
+
+				//クライアントに送信
+
+
+
+				//LocalSpawn(identity, );
+			});
+		}
+
+		private static unsafe void LocalSpawn (RecordableIdentity identity, NativeArray<ushort> netIds, ushort author, System.Action<RecordableIdentity, bool> callback)
+		{
+			//Debug.Log($"LocalSpawn {identity} {netId} {author}");
+			//RegisterIdentity(identity, netId, author);
+
+			//callback?.Invoke(identity, success);
+			//spawnInfo.Dispose();
+
+			//OnSpawnIdentity?.Invoke(identity);
+		}
+
+		public static void DespawnRequest(ushort netId, System.Action<bool> result)
+		{
+			if (netId >= m_SpawnStateList.Count) result?.Invoke(false);
+			if (m_SpawnStateList[netId] != SpawnState.Spawned) result?.Invoke(false);
+
+			var identity = Instance.m_identityList[netId];
+			if (identity == null) return;
+
+			//自分の管理権限がない場合はDespawnできない
+			if (!GamePacketManager.IsLeader && identity.author != GamePacketManager.PlayerId) return;
+
+			using (var array = new NativeArray<byte>(4, Allocator.Temp))
+			{
+				var writer = new NativeStreamWriter(array);
+				writer.WriteByte((byte)BuiltInPacket.Type.DespawnIdentity);
+				writer.WriteUShort(netId);
+				RecordablePacketManager.Brodcast(writer, QosType.Reliable);
+			}
+			LocalDespawn(netId, result);
+		}
+
+		private static void LocalDespawn (ushort netId, System.Action<bool> result)
+		{
+			if (netId >= m_SpawnStateList.Count) result?.Invoke(false);
+			if (m_SpawnStateList[netId] != SpawnState.Spawned) result?.Invoke(false);
+
+			m_SpawnStateList[netId] = SpawnState.Empty;
+			var identity = Instance.m_identityList[netId];
+
+			if (identity != null)
+			{
+				Instance.m_identityList[netId] = null;
+				OnDespawnIdentity?.Invoke(identity);
+				Destroy(identity);
+			}
+
+			m_DespawnedNetId = netId;   //次の検索を早くするため 
+		}
+		
 		/// <summary>
 		/// Hostに問い合わせて重複しないNetIDを取得する.
 		/// </summary>
 		public static void ReserveNetId (System.Action<ushort> onReserveNetId) {
 			if (GamePacketManager.IsLeader)
 			{
-				ushort count = (ushort)Instance.m_identityList.Count;
-				Instance.m_identityList.Add(null);
-				onReserveNetId (count);
+				onReserveNetId (ReserveNetIdForHost());
 			} else {
 				uncheckReserveNetIdCallbacks.Add (onReserveNetId);
-				using (var packet = new DataStreamWriter (1, Allocator.Temp)) {
-					packet.Write ((byte)BuiltInPacket.Type.ReserveNetId);
+
+				using (var array = new NativeArray<byte>(1, Allocator.Temp))
+				{
+					var packet = new NativeStreamWriter(array);
+					packet.WriteByte ((byte)BuiltInPacket.Type.ReserveNetId);
 					GamePacketManager.Send (0, packet, QosType.Reliable);
 				}
 			}
@@ -123,9 +263,20 @@ namespace ICKX.Radome {
 		{
 			if (GamePacketManager.IsLeader)
 			{
-				ushort count = (ushort)Instance.m_identityList.Count;
+				for (ushort i = 0; i < m_SpawnStateList.Count; i++)
+				{
+					if (m_SpawnStateList[i] == SpawnState.Empty)
+					{
+						m_SpawnStateList[i] = SpawnState.Reserve;
+						return i;
+					}
+				}
+
+				//最後に追加
+				m_SpawnStateList.Add( SpawnState.Reserve);
 				Instance.m_identityList.Add(null);
-				return count;
+
+				return (ushort)(m_SpawnStateList.Count - 1);
 			}
 			else
 			{
@@ -139,8 +290,12 @@ namespace ICKX.Radome {
 		/// </summary>
 		public static void RegisterIdentity (RecordableIdentity identity, ushort netId, ushort author) {
 			if (identity == null) return;
+			if (netId < m_SpawnStateList.Count && m_SpawnStateList[netId] == SpawnState.Spawned) return;
 
-			while (netId >= Instance.m_identityList.Count) Instance.m_identityList.Add (null);
+			while (m_SpawnStateList.Count <= netId) m_SpawnStateList.Add( SpawnState.Empty);
+			while (Instance.m_identityList.Count <= netId) Instance.m_identityList.Add(null);
+
+			m_SpawnStateList[netId] = SpawnState.Spawned;
 			Instance.m_identityList[netId] = identity;
 			identity.m_netId = netId;
 			identity.SetAuthor (author);
@@ -195,32 +350,53 @@ namespace ICKX.Radome {
 			RequestSyncAuthor (identity.sceneHash, identity.netId);
 		}
 
-		private static void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, DataStreamReader recievePacket, DataStreamReader.Context ctx) {
+		private static unsafe void OnRecievePacket (ushort senderPlayerId, ulong senderUniqueId, byte type, NativeStreamReader recievePacket) {
+			ushort netId;
+			ushort author;
 			switch ((BuiltInPacket.Type)type) {
 				case BuiltInPacket.Type.ReserveNetId:
-					RecieveReserveNetId (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveReserveNetId (senderPlayerId, recievePacket);
 					break;
 				case BuiltInPacket.Type.ChangeAuthor:
-					int sceneHash = recievePacket.ReadInt (ref ctx);
-					ushort netId = recievePacket.ReadUShort (ref ctx);
-					ushort author = recievePacket.ReadUShort (ref ctx);
+					int sceneHash = recievePacket.ReadInt ();
+					netId = recievePacket.ReadUShort ();
+					author = recievePacket.ReadUShort ();
 					RecieveChangeAuthor (sceneHash, netId, author);
 					break;
 				case BuiltInPacket.Type.SyncAuthor:
-					int sceneHash2 = recievePacket.ReadInt (ref ctx);
-					ushort netId2 = recievePacket.ReadUShort (ref ctx);
-					RecieveSyncAuthor (sceneHash2, netId2);
+					int sceneHash2 = recievePacket.ReadInt ();
+					netId = recievePacket.ReadUShort ();
+					RecieveSyncAuthor (sceneHash2, netId);
 					break;
 				case BuiltInPacket.Type.SyncTransform:
-					RecieveSyncTransform (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveSyncTransform (senderPlayerId, recievePacket);
 					break;
 				case BuiltInPacket.Type.BehaviourRpc:
-					RecieveBehaviourRpc (senderPlayerId, ref recievePacket, ref ctx);
+					RecieveBehaviourRpc (senderPlayerId, recievePacket);
+					break;
+				case BuiltInPacket.Type.SpawnIdentity:
+					author = recievePacket.ReadByte() == 1 ? senderPlayerId : (ushort)0;
+					netId = recievePacket.ReadUShort();
+					ushort dataLen = recievePacket.ReadUShort();
+					NativeArray<byte> spawnInfo = new NativeArray<byte>(dataLen, Allocator.Persistent);
+					recievePacket.ReadBytes((byte*)spawnInfo.GetUnsafePtr(), dataLen);
+					//LocalSpawn(spawnInfo, netId, author, null);
+					break;
+				case BuiltInPacket.Type.DespawnIdentity:
+					netId = recievePacket.ReadUShort();
+					if (netId >= Instance.m_identityList.Count) return;
+					var identity = Instance.m_identityList[netId];
+
+					//サーバーか所有権持っている人しかdespawnできない
+					if(identity != null && (senderPlayerId == 0 || identity.author == senderPlayerId))
+					{
+						LocalDespawn(netId, null);
+					}
 					break;
 			}
 		}
 
-		private static void RecieveReserveNetId (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
+		private static void RecieveReserveNetId (ushort senderPlayerId, NativeStreamReader recievePacket) {
 
 			if (GamePacketManager.IsLeader) {
 				//HostではNetIDの整合性を確認
@@ -228,14 +404,15 @@ namespace ICKX.Radome {
 				Instance.m_identityList.Add (null);
 
 				//Clientに通達する
-				using (var packet = new DataStreamWriter (3, Allocator.Temp)) {
-					packet.Write ((byte)BuiltInPacket.Type.ReserveNetId);
-					packet.Write (reserveNetId);
+				using (var array = new NativeArray<byte> (3, Allocator.Temp)) {
+					var packet = new NativeStreamWriter(array);
+					packet.WriteByte ((byte)BuiltInPacket.Type.ReserveNetId);
+					packet.WriteUShort (reserveNetId);
 					GamePacketManager.Send (senderPlayerId, packet, QosType.Reliable);
 				}
 			} else {
 				//確認されたauthorの変更を反映
-				ushort reserveNetId = recievePacket.ReadUShort (ref ctx);
+				ushort reserveNetId = recievePacket.ReadUShort ();
 				if (uncheckReserveNetIdCallbacks.Count > 0) {
 					uncheckReserveNetIdCallbacks[0] (reserveNetId);
 					uncheckReserveNetIdCallbacks.RemoveAt (0);
@@ -271,32 +448,32 @@ namespace ICKX.Radome {
 			}
 		}
 
-		private static void RecieveSyncTransform (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
-			int sceneHash = recievePacket.ReadInt (ref ctx);
-			ushort netId = recievePacket.ReadUShort (ref ctx);
+		private static void RecieveSyncTransform (ushort senderPlayerId, NativeStreamReader recievePacket) {
+			int sceneHash = recievePacket.ReadInt ();
+			ushort netId = recievePacket.ReadUShort ();
 
 			if (sceneHash == 0) {
-				Instance.RecieveSyncTransformInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+				Instance.RecieveSyncTransformInGroup (senderPlayerId, netId, recievePacket);
 			} else {
 				RecordableSceneIdentity sceneIdentity;
 				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
-					sceneIdentity.RecieveSyncTransformInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+					sceneIdentity.RecieveSyncTransformInGroup (senderPlayerId, netId, recievePacket);
 				} else {
 					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
 				}
 			}
 		}
 
-		private static void RecieveBehaviourRpc (ushort senderPlayerId, ref DataStreamReader recievePacket, ref DataStreamReader.Context ctx) {
-			int sceneHash = recievePacket.ReadInt (ref ctx);
-			ushort netId = recievePacket.ReadUShort (ref ctx);
+		private static void RecieveBehaviourRpc (ushort senderPlayerId, NativeStreamReader recievePacket) {
+			int sceneHash = recievePacket.ReadInt ();
+			ushort netId = recievePacket.ReadUShort ();
 
 			if (sceneHash == 0) {
-				Instance.RecieveBehaviourRpcInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+				Instance.RecieveBehaviourRpcInGroup (senderPlayerId, netId, recievePacket);
 			} else {
 				RecordableSceneIdentity sceneIdentity;
 				if (m_recordableSceneIdentitTable.TryGetValue (sceneHash, out sceneIdentity)) {
-					sceneIdentity.RecieveBehaviourRpcInGroup (senderPlayerId, netId, ref recievePacket, ref ctx);
+					sceneIdentity.RecieveBehaviourRpcInGroup (senderPlayerId, netId, recievePacket);
 				} else {
 					Debug.LogError ($"{sceneHash} is not found in recordableSceneIdentitTable");
 				}
