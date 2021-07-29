@@ -11,13 +11,8 @@ namespace ICKX.Radome {
             RegisterPlayer,
             ReconnectPlayer,
             UnregisterPlayer,
-            //NotifyRegisterPlayer,
-            //NotifyUnegisterPlayer,
-            //NotifyReconnectPlayer,
-            //NotifyDisconnectPlayer,
             UpdatePlayerInfo,
 			StopNetwork,
-			RelayChunkedPacket,
 
             ReserveNetId,
             ChangeAuthor,
@@ -27,6 +22,10 @@ namespace ICKX.Radome {
 
 			DataTransporter,
 			SyncPhase,
-        }
-    }
+
+			SpawnIdentity,
+			DespawnIdentity,
+
+		}
+	}
 }

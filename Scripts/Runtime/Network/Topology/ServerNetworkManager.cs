@@ -338,14 +338,14 @@ namespace ICKX.Radome
 			};
 			return recievePacketJob.Schedule(jobHandle);
 		}
-		
+
 		struct SendPacketaJob : IJob
 		{
 			public NetworkDriver driver;
 			[ReadOnly]
-			public NativeList<int> connections;		//Key : PlayerId
+			public NativeList<int> connections;     //Key : PlayerId
 			[ReadOnly]
-			public NativeList<NetworkConnection> networkConnections;	//Key : connectionId
+			public NativeList<NetworkConnection> networkConnections;    //Key : connectionId
 
 			[ReadOnly]
 			[NativeDisableUnsafePtrRestriction]
@@ -363,17 +363,19 @@ namespace ICKX.Radome
 			[ReadOnly]
 			public ushort serverPlayerId;
 
-			bool IsConnected (ushort playerId)
+			bool IsConnected(ushort playerId)
 			{
 				if (playerId == serverPlayerId) return false;
 				if (playerId >= connections.Length) return false;
 				if (connections[playerId] == -1 || connections[playerId] >= networkConnections.Length) return false;
+				if (driver.GetConnectionState(networkConnections[connections[playerId]]) != NetworkConnection.State.Connected) return false;
 				return true;
 			}
 
-			unsafe void SendPacket (ushort playerId, byte qos, ref NativeStreamWriter writer)
+			unsafe void SendPacket(ushort playerId, byte qos, ref NativeStreamWriter writer)
 			{
 				var connection = networkConnections[connections[playerId]];
+
 				var sendWriter = driver.BeginSend(qosPipelines[qos], connection);
 				sendWriter.WriteBytes(writer.GetUnsafePtr(), writer.Length);
 				driver.EndSend(sendWriter);
@@ -389,7 +391,7 @@ namespace ICKX.Radome
 				if (singlePacketBuffer.Length != 0)
 				{
 					var reader = new NativeStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
-					while(true)
+					while (true)
 					{
 						if (!CreateSingleSendPacket(ref tempWriter, out ushort targetPlayerId, out byte qos, ref reader, multiCastList, serverPlayerId)) break;
 
@@ -506,9 +508,11 @@ namespace ICKX.Radome
 				}
 				multiCastList.Dispose();
 			}
-			
+
 			private unsafe void SendMethod(byte qos, ushort targetPlayerId, NativeStreamReader packet)
 			{
+				if (targetPlayerId >= connections.Length) return;
+				if (connections[targetPlayerId] >= networkConnections.Length) return;
 				var connection = networkConnections[connections[targetPlayerId]];
 
 				var sendWriter = driver.BeginSend(qosPipelines[qos], connection);
@@ -838,7 +842,7 @@ namespace ICKX.Radome
 			writer.WriteBytes(packetPtr, packetDataLen);
 			return true;
 		}
-		
+
 		protected static unsafe bool CreateChunkSendPacket(ref NativeStreamWriter writer, ref NativeStreamReader reader, NativeList<ushort> multiCastList, ushort serverPlayerId, byte qos)
 		{
 			writer.Clear();
@@ -890,7 +894,7 @@ namespace ICKX.Radome
 					if (connections[i] != -1 && senderPlayerId != i)
 					{
 						replayPackat.SetPosition(0);
-						sendMethod(qos, targetPlayerId, replayPackat);
+						sendMethod(qos, i, replayPackat);
 					}
 				}
 				PurgeChunk(senderPlayerId, con, ref stream, ref recieveBuffer, ref dataStream);
@@ -910,7 +914,7 @@ namespace ICKX.Radome
 						if (senderPlayerId != multiCastList[i])
 						{
 							replayPackat.SetPosition(0);
-							sendMethod(qos, targetPlayerId, replayPackat);
+							sendMethod(qos, multiCastList[i], replayPackat);
 						}
 					}
 				}
@@ -938,9 +942,9 @@ namespace ICKX.Radome
 				int pos = stream.GetBytesRead();
 				if (pos >= stream.Length) break;
 				ushort dataLen = stream.ReadUShort();
-				
+
 				if (dataLen == 0 || pos + dataLen >= stream.Length) break;
-				
+
 				//recieveBufferに1フレーム分のパケットをバッファリングしていく
 				int startIndex = recieveBuffer.Length;
 				if (recieveBuffer.Length + dataLen > recieveBuffer.Capacity)
@@ -957,7 +961,7 @@ namespace ICKX.Radome
 		}
 
 		protected abstract void DisconnectMethod(ConnIdType connId);
-		
+
 		protected override bool DeserializePacket(ConnIdType connId, ulong uniqueId, byte type, NativeStreamReader chunk)
 		{
 			//Debug.Log($"DeserializePacket : {uniqueId} : {(BuiltInPacket.Type)type} {chunk.Length}");

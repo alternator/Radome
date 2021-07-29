@@ -364,38 +364,42 @@ namespace ICKX.Radome
 				var tempBuffer = new NativeArray<byte>(NetworkParameterConstants.MTU, Allocator.Temp);
 				var tempWriter = new NativeStreamWriter(tempBuffer);
 
-				if (singlePacketBuffer.Length != 0)
+				if (driver.GetConnectionState(serverConnection) == NetworkConnection.State.Connected)
 				{
-					var reader = new NativeStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
-					while (true)
+					if (singlePacketBuffer.Length != 0)
 					{
-						if (!CreateSingleSendPacket(ref tempWriter, out ushort targetPlayerId, out byte qos, ref reader, multiCastList, senderPlayerId)) break;
+						var reader = new NativeStreamReader(singlePacketBuffer, 0, singlePacketBuffer.Length);
+						while (true)
+						{
+							if (!CreateSingleSendPacket(ref tempWriter, out ushort targetPlayerId, out byte qos, ref reader, multiCastList, senderPlayerId)) break;
 
-						SendPacket(qos, ref tempWriter);
+							SendPacket(qos, ref tempWriter);
+						}
+					}
+
+					if (udpPacketBuffer.Length != 0)
+					{
+						var reader = new NativeStreamReader(udpPacketBuffer, 0, udpPacketBuffer.Length);
+						while (true)
+						{
+							if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, senderPlayerId, (byte)QosType.Unreliable)) break;
+
+							SendPacket((byte)QosType.Unreliable, ref tempWriter);
+							//serverConnection.Send(driver, temp);
+						}
+					}
+					if (rudpPacketBuffer.Length != 0)
+					{
+						var reader = new NativeStreamReader(rudpPacketBuffer, 0, rudpPacketBuffer.Length);
+						while (true)
+						{
+							if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, senderPlayerId, (byte)QosType.Reliable)) break;
+
+							SendPacket((byte)QosType.Reliable, ref tempWriter);
+						}
 					}
 				}
 
-				if (udpPacketBuffer.Length != 0)
-				{
-					var reader = new NativeStreamReader(udpPacketBuffer, 0, udpPacketBuffer.Length);
-					while (true)
-					{
-						if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, senderPlayerId, (byte)QosType.Unreliable)) break;
-
-						SendPacket((byte)QosType.Unreliable, ref tempWriter);
-						//serverConnection.Send(driver, temp);
-					}
-				}
-				if (rudpPacketBuffer.Length != 0)
-				{
-					var reader = new NativeStreamReader(rudpPacketBuffer, 0, rudpPacketBuffer.Length);
-					while (true)
-					{
-						if (!CreateChunkSendPacket(ref tempWriter, ref reader, multiCastList, senderPlayerId, (byte)QosType.Reliable)) break;
-
-						SendPacket((byte)QosType.Reliable, ref tempWriter);
-					}
-				}
 				tempBuffer.Dispose();
 				multiCastList.Dispose();
 			}
@@ -463,7 +467,7 @@ namespace ICKX.Radome
 		{
 			JobHandle.Complete();
 
-			if (MyPlayerInfo.PlayerId != 0 && MyPlayerInfo.PlayerId < ushort.MaxValue-2)
+			if (MyPlayerInfo.PlayerId != 0 && MyPlayerInfo.PlayerId < ushort.MaxValue - 2)
 			{
 				Debug.Log("IsReConnected" + connId);
 				//再接続
@@ -579,7 +583,7 @@ namespace ICKX.Radome
 					packet.WriteByte((byte)connInfo.State);
 					playerInfo.AppendPlayerInfoPacket(ref packet);
 					Broadcast(packet, QosType.Reliable);
-				} 
+				}
 			}
 			else
 			{

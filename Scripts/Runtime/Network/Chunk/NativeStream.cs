@@ -220,6 +220,12 @@ namespace ICKX.Radome
 			return m_Data.buffer;
 		}
 
+		public void SetPosition(int pos)
+		{
+			if (pos >= m_Data.capacity) throw new System.ArgumentOutOfRangeException();
+			m_Data.length = pos;
+		}
+
 		public bool WriteBytes(byte* data, int bytes)
 		{
 #if ENABLE_UNITY_COLLECTIONS_CHECKS

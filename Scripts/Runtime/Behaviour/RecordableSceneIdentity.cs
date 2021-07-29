@@ -193,11 +193,7 @@ namespace ICKX.Radome
 	public class RecordableSceneIdentity : RecordableGroupIdentity
 	{
 
-		private List<RecordableIdentity> m_despawnIdentityList;
-
 		public int sceneHash { get { return m_groupHash; } private set { m_groupHash = value; } }
-
-		public IReadOnlyList<RecordableIdentity> despawnIdentityList { get { return m_despawnIdentityList; } }
 
 #if UNITY_EDITOR
 		private void Reset()
